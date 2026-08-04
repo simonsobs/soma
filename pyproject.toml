@@ -33,7 +33,7 @@ dependencies = [
     "healpy>=1.16",
     "pandas>=2.0",
     "ducc0>=0.34",
-    "pywiggle>=0.1.23",
+    "pywiggle>=0.1.25",
 ]
 
 [project.optional-dependencies]
