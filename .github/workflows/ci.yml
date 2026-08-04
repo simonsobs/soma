@@ -32,6 +32,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+    env:
+      # Keep the Python-level traceback when a C extension aborts (SIGABRT),
+      # instead of a bare "Abort trap: 6" with no context.
+      PYTHONFAULTHANDLER: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,6 +48,93 @@ jobs:
           python -m pip install ".[test]"
       - name: Run tests
         run: pytest --cov=soma --cov-report=xml
+
+  # ---------------------------------------------------------------------------
+  # TEMPORARY DIAGNOSTIC. Investigating the macOS `Abort trap: 6` inside
+  # pywiggle.core.Wiggle.__init__ (tests/test_estimate.py). Hypothesis: pywiggle,
+  # pixell and healpy each vendor their own libomp, and loading multiple OpenMP
+  # runtimes into one process aborts. Delete this job once resolved.
+  # ---------------------------------------------------------------------------
+  diagnose-macos-openmp:
+    name: "Diagnose macOS OpenMP runtimes"
+    runs-on: macos-14      # arm64, matches the failing runner
+    continue-on-error: true
+    env:
+      PYTHONFAULTHANDLER: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # matches the failing job
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[test]" threadpoolctl
+
+      # 1a. Which threading runtimes are loaded, and which import pulls each in.
+      - name: Loaded threading runtimes (by import order)
+        run: |
+          python - <<'EOF'
+          from threadpoolctl import threadpool_info
+
+          def dump(label):
+              print(f"\n=== {label} ===", flush=True)
+              for d in threadpool_info():
+                  print(f"  {d['user_api']:8s} {d.get('internal_api',''):10s} "
+                        f"threads={d.get('num_threads')}  {d['filepath']}", flush=True)
+
+          dump("baseline")
+          import numpy, scipy.linalg; dump("after numpy+scipy")
+          import pixell.curvedsky;    dump("after pixell")
+          import healpy;              dump("after healpy")
+          import pywiggle;            dump("after pywiggle")
+
+          omp = [d for d in threadpool_info() if d["user_api"] == "openmp"]
+          paths = sorted({d["filepath"] for d in omp})
+          print(f"\nDistinct OpenMP runtimes loaded: {len(paths)}", flush=True)
+          for p in paths:
+              print(f"  {p}", flush=True)
+          if len(paths) > 1:
+              print("::warning::DUPLICATE OPENMP RUNTIMES - likely abort cause", flush=True)
+          EOF
+
+      # 1b. What each extension ASKS for (threadpool_info only shows what loaded).
+      - name: Dylib linkage of installed extensions
+        run: |
+          python - <<'EOF'
+          import pathlib, subprocess, sysconfig
+          site = pathlib.Path(sysconfig.get_paths()["purelib"])
+          for pkg in ("pywiggle", "pixell", "healpy", "ducc0"):
+              root = site / pkg
+              if not root.exists():
+                  print(f"\n{pkg}: not installed"); continue
+              for so in sorted(root.glob("**/*.so")):
+                  out = subprocess.run(["otool", "-L", str(so)],
+                                       capture_output=True, text=True).stdout
+                  if "omp" in out:
+                      print(f"\n{so.relative_to(site)}")
+                      print("\n".join(l for l in out.splitlines() if "omp" in l))
+              dylibs = root / ".dylibs"
+              if dylibs.exists():
+                  for dylib in sorted(dylibs.glob("*")):
+                      print(f"VENDORED: {pkg}/.dylibs/{dylib.name}")
+          EOF
+
+      # 1c. Does tolerating duplicate runtimes make the crash go away?
+      # UNSAFE as a fix (can give wrong numerics) - diagnostic only.
+      - name: "Confirm hypothesis: KMP_DUPLICATE_LIB_OK"
+        continue-on-error: true
+        env:
+          KMP_DUPLICATE_LIB_OK: "TRUE"
+        run: pytest tests/test_estimate.py -x
+
+      # Distinguishes "duplicate runtimes" from "unsafe parallel region / race".
+      - name: "Confirm hypothesis: single-threaded"
+        continue-on-error: true
+        env:
+          OMP_NUM_THREADS: "1"
+        run: pytest tests/test_estimate.py -x
 
   build:
     name: Build sdist and wheel
