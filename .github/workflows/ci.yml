@@ -57,7 +57,10 @@ jobs:
   # ---------------------------------------------------------------------------
   diagnose-macos-openmp:
     name: "Diagnose macOS OpenMP runtimes"
-    runs-on: macos-14      # arm64, matches the failing runner
+    # Must match the failing job exactly. NOTE: pixell/healpy publish
+    # macosx_15_0_arm64 wheels, so on an older runner (e.g. macos-14) pip falls
+    # back to the sdist and pixell's build needs gfortran, which isn't present.
+    runs-on: macos-latest
     continue-on-error: true
     env:
       PYTHONFAULTHANDLER: "1"
@@ -65,12 +68,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"   # matches the failing job
+          python-version: "3.13"   # matches the failing job
 
       - name: Install package and test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install ".[test]" threadpoolctl
+          python -m pip list
 
       # 1a. Which threading runtimes are loaded, and which import pulls each in.
       - name: Loaded threading runtimes (by import order)
@@ -135,6 +139,24 @@ jobs:
         env:
           OMP_NUM_THREADS: "1"
         run: pytest tests/test_estimate.py -x
+
+      # Does the crash need soma/pixell/healpy at all, or is pywiggle alone enough?
+      # If pywiggle-only passes but the import-first version aborts, the other
+      # packages' runtimes are implicated rather than pywiggle itself.
+      - name: "Isolate: pywiggle alone vs. after pixell+healpy"
+        continue-on-error: true
+        run: |
+          echo "--- pywiggle only ---"
+          python -c "
+          import pywiggle, inspect
+          print(inspect.signature(pywiggle.core.Wiggle.__init__))
+          " || true
+          python tests/test_estimate.py 2>&1 | tail -5 || true
+          echo "--- with pixell+healpy imported first ---"
+          python -c "
+          import pixell.curvedsky, healpy, pywiggle
+          print('imports OK')
+          " || true
 
   build:
     name: Build sdist and wheel
