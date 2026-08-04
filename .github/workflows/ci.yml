@@ -140,23 +140,48 @@ jobs:
           OMP_NUM_THREADS: "1"
         run: pytest tests/test_estimate.py -x
 
-      # Does the crash need soma/pixell/healpy at all, or is pywiggle alone enough?
-      # If pywiggle-only passes but the import-first version aborts, the other
-      # packages' runtimes are implicated rather than pywiggle itself.
-      - name: "Isolate: pywiggle alone vs. after pixell+healpy"
+      # Does constructing Wiggle crash on its own, or only after pixell/healpy
+      # have loaded their own runtimes? Each case runs in a separate process so
+      # one abort doesn't hide the other.
+      - name: "Isolate: construct Wiggle, with and without pixell/healpy"
         continue-on-error: true
         run: |
-          echo "--- pywiggle only ---"
+          set +e
+          echo "=== A: pywiggle alone ==="
           python -c "
-          import pywiggle, inspect
-          print(inspect.signature(pywiggle.core.Wiggle.__init__))
-          " || true
-          python tests/test_estimate.py 2>&1 | tail -5 || true
-          echo "--- with pixell+healpy imported first ---"
+          import pywiggle
+          w = pywiggle.core.Wiggle(1000)
+          print('A OK:', w)
+          "
+          echo "A exit=$?"
+
+          echo "=== B: after pixell+healpy ==="
           python -c "
-          import pixell.curvedsky, healpy, pywiggle
-          print('imports OK')
-          " || true
+          import pixell.curvedsky, healpy
+          import pywiggle
+          w = pywiggle.core.Wiggle(1000)
+          print('B OK:', w)
+          "
+          echo "B exit=$?"
+
+          echo "=== C: after pixell+healpy, single-threaded ==="
+          OMP_NUM_THREADS=1 python -c "
+          import pixell.curvedsky, healpy
+          import pywiggle
+          w = pywiggle.core.Wiggle(1000)
+          print('C OK:', w)
+          "
+          echo "C exit=$?"
+
+          echo "=== D: same as B but with duplicate libomp tolerated ==="
+          KMP_DUPLICATE_LIB_OK=TRUE python -c "
+          import pixell.curvedsky, healpy
+          import pywiggle
+          w = pywiggle.core.Wiggle(1000)
+          print('D OK:', w)
+          "
+          echo "D exit=$?"
+          exit 0
 
   build:
     name: Build sdist and wheel
