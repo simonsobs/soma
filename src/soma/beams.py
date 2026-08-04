@@ -364,8 +364,7 @@ def fit_gaussian(bmap, elliptical=False, mask=None, p0=None, nsigma=8.0):
 # measured beams
 # ---------------------------------------------------------------------------
 def _aperture(shape, wcs, center_pix, rmax_arcmin):
-    """Zero everything more than `rmax_arcmin` from the beam center.
-    """
+    """Zero everything more than `rmax_arcmin` from the beam center."""
     ny, nx = shape[-2:]
     if rmax_arcmin is None:  # largest inscribed circle
         pix = np.mean(np.abs(enmap.pixshape(shape[-2:], wcs))) / utils.arcmin
@@ -799,7 +798,7 @@ def estimate_jitter_beam(
     # b_m/b_0. C^(m) is the real-space azimuthal moment of the stack; i^m
     # conj(.) converts it to the harmonic-space beam multipole in the
     # astronomical convention, in which anisotropy at position angle PA east
-    # of north carries the phase exp(-i m PA). 
+    # of north carries the phase exp(-i m PA).
     for m in ms:
         if m == 0:
             continue

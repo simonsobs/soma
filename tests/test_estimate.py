@@ -1,5 +1,4 @@
-"""pytest suite for soma.beams.estimate_jitter_beam.
-"""
+"""pytest suite for soma.beams.estimate_jitter_beam."""
 
 import numpy as np
 import pytest

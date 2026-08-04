@@ -1,5 +1,4 @@
-"""pytest suite for soma.harmonic: azimuthal modes of a generic image.
-"""
+"""pytest suite for soma.harmonic: azimuthal modes of a generic image."""
 
 import numpy as np
 import pytest

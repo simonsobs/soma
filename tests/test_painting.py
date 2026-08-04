@@ -1,5 +1,4 @@
-"""pytest suite for the object-painting and mask helpers in soma.maps.
-"""
+"""pytest suite for the object-painting and mask helpers in soma.maps."""
 
 import numpy as np
 import pytest

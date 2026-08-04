@@ -1,5 +1,4 @@
-"""pytest suite for soma.beams: measured beam transforms vs analytic truth.
-"""
+"""pytest suite for soma.beams: measured beam transforms vs analytic truth."""
 
 import numpy as np
 import pytest
@@ -58,8 +57,7 @@ def test_gaussian_transfer_function_vs_width(fwhm):
 
 
 def test_circular_beam_has_no_higher_modes(circular):
-    """Every m > 0 of a circular beam is zero to the estimator floor.
-    """
+    """Every m > 0 of a circular beam is zero to the estimator floor."""
     res = beams.beam_modes(circular, ell=ELL, mmax=8)
     for m in range(1, 9):
         assert np.nanmedian(res["rho"][m]) < 1e-8, f"m={m}"
@@ -540,5 +538,3 @@ def test_a_mirrored_map_reports_a_mirrored_offset():
     assert a["dx_arcmin"] == pytest.approx(-b["dx_arcmin"], abs=1e-12)
     assert a["dy_arcmin"] == pytest.approx(b["dy_arcmin"], abs=1e-12)
     assert abs(a["dx_arcmin"]) == pytest.approx(0.25, abs=1e-9)  # half a pixel
-
-

@@ -85,7 +85,7 @@ def centroid_pixels(imap, wrap_safe=True, thresh=0.0):
     and, for wrapped input, outside [0, N).
 
     `thresh` ignores everything below that fraction of the peak, by
-    subtracting the level and clipping at zero. 
+    subtracting the level and clipping at zero.
     """
     b = np.asarray(imap, dtype=float)
     if b.ndim != 2:
@@ -109,7 +109,7 @@ def centroid_pixels(imap, wrap_safe=True, thresh=0.0):
 def fourier_recenter(imap, center, fourier=False):
     """Move whatever sits at pixel `center` to the origin, exactly.
     Thin wrapper around pixell.fft.shift.
-    
+
     Parameters
     ----------
     imap : (..., Ny, Nx) real-space map, or its *natural-order*
@@ -119,7 +119,7 @@ def fourier_recenter(imap, center, fourier=False):
         is there ends up at pixel (0, 0). To translate content *by* an
         offset d instead, pass ``center=-d``.
     fourier : the input has already been transformed, so apply the phase
-        ramp and stop rather than doing fft -> phase -> ifft. 
+        ramp and stop rather than doing fft -> phase -> ifft.
 
     """
     y0, x0 = np.asarray(center, dtype=float)

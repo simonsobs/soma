@@ -1,5 +1,4 @@
-"""pytest suite for the curved-sky half of soma.harmonic.
-"""
+"""pytest suite for the curved-sky half of soma.harmonic."""
 
 import ducc0
 import numpy as np

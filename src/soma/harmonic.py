@@ -29,7 +29,7 @@ harmonic basis, `multipole_cross_spectrum` crosses that with the map, and
 `harm2profile` resums the result back to the real-space azimuthal moment.
 `beam_multipole` turns the cross-spectrum into b_m/b_0. Those four are the
 curved-sky half of this module, and share nothing with the flat-sky half
-except the idea. 
+except the idea.
 """
 
 import ducc0
@@ -171,7 +171,7 @@ def azimuthal_modes(imap, ell=None, mmax=6, center=None, nphi=None, order=3, qu_
     nphi : azimuthal samples per ring, the same for every ring; default
         max(256, 8*mmax).
     order : spline order for the ring interpolation (scipy's
-        `map_coordinates`), default 3. 
+        `map_coordinates`), default 3.
     qu_to_eb : take a 3-component input as (T, Q, U) and rotate Q/U to
         E/B on each ring before transforming, returning (T, E, B). The
         rotation uses the ring's own psi, where it is exact. Signs follow

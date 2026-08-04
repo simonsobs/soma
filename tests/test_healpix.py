@@ -105,7 +105,7 @@ def test_stacked_thumbnails_recover_the_healpix_pixel_window(painted):
 def test_the_window_is_not_the_whole_story(painted):
     """`thumbnails_healpix` interpolates the HEALPix map bilinearly
     (`hp.get_interp_val`), and that is a third transfer function on top of
-    the beam and the pixel window. 
+    the beam and the pixel window.
     """
     pos, averaged, _ = painted
     ell = np.arange(100.0, 1100.0, 100.0)
@@ -203,7 +203,6 @@ def test_the_forward_model_closes(nside):
         * maps.healpix_interp_window(nside, ell)
     )
     assert np.max(np.abs(got / (want / want[0]) - 1.0)) < 0.01
-
 
 
 def test_interp_window_is_validated_by_the_analytic_beam_alone():

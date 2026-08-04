@@ -65,11 +65,9 @@ class bin1D:
     """
 
     def __init__(self, bin_edges):
-
         self.update_bin_edges(bin_edges)
 
     def update_bin_edges(self, bin_edges):
-
         self.bin_edges = bin_edges
         self.numbins = len(bin_edges) - 1
         self.cents = (self.bin_edges[:-1] + self.bin_edges[1:]) / 2.0
