@@ -247,10 +247,25 @@ def _footprint(src, threshold, gshape, gwcs, res):
         cover = cover.reshape((-1,) + cover.shape[-2:]).any(0)
     cover = enmap.enmap(cover.astype(np.float32), imap.wcs, copy=False)
     factor = max(1, int(res / abs(float(imap.wcs.wcs.cdelt[1]))))
+    # A map that goes all the way round in RA has no real edge at its seam, but
+    # both steps below treat one as if it did: downgrade drops the columns left
+    # over by a width that is not a whole number of blocks, and the projection
+    # has nothing to interpolate with beyond the last column, so it falls back
+    # on cval. Either leaves a meridian of empty pixels at the seam. Carrying
+    # the far side's columns across it first fixes both; a map that stops short
+    # of a full turn picks up zeros there instead, as it should.
+    cover = _wrap_pad(cover, 2 * factor, 2 * factor + (-cover.shape[-1] % factor))
     if factor > 1:
         cover = enmap.downgrade(cover, factor, op=np.max)   # keeps thin coverage
     proj = enmap.project(cover, gshape, gwcs, order=0, border="constant", cval=0.0)
     return np.asarray(proj) > 0.5
+
+
+def _wrap_pad(m, left, right):
+    """Widen a map in RA, taking the extra columns from the opposite edge where
+    it wraps round the sky and filling with zeros where it does not."""
+    return enmap.extract_pixbox(
+        m, [[0, -left], [m.shape[-2], m.shape[-1] + right]], cval=0.0)
 
 
 def _bundled_backdrop():

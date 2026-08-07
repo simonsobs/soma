@@ -71,6 +71,33 @@ def test_fullsky_map_covers_the_sphere(tmp_path):
     assert areas["all sky"] == pytest.approx(41253.0, rel=0.01)
 
 
+@pytest.mark.parametrize("nx", [10800, 9999])       # divides the working grid, or not
+def test_wrapping_map_has_no_seam(nx):
+    """A map going all the way round in RA must land on the grid unbroken.
+
+    Its RA=180 edge is not an edge of the sky, so no column of the working grid
+    may come out empty there; nx=9999 also leaves the downgrade a part-block to
+    crop, which used to widen the same gap.
+    """
+    from soma import io as soma_io
+    box = np.array([[-60, 180], [20, -180]]) * utils.degree
+    shape, wcs = enmap.geometry(pos=box, res=360.0 / nx * utils.degree, proj="car")
+    gshape, gwcs = enmap.fullsky_geometry(res=0.2 * utils.degree, proj="car")
+    mask = soma_io._footprint(enmap.ones(shape, wcs), 0.0, gshape, gwcs, 0.2)
+    rows = mask.sum(0)
+    assert rows.min() == rows.max() > 0
+
+
+def test_partial_map_does_not_wrap_round_the_sky():
+    """The seam padding must not carry a map's own edge round to the far side."""
+    from soma import io as soma_io
+    gshape, gwcs = enmap.fullsky_geometry(res=0.2 * utils.degree, proj="car")
+    mask = soma_io._footprint(strip((-10, 10), (-40, 40)), 0.0, gshape, gwcs, 0.2)
+    ra = gwcs.wcs.crval[0] + (np.nonzero(mask.any(0))[0] + 1 - gwcs.wcs.crpix[0]) \
+        * gwcs.wcs.cdelt[0]
+    assert abs(ra).max() == pytest.approx(40, abs=0.3)
+
+
 def test_downgrade_preserves_thin_coverage(tmp_path):
     """Max-pooling to the working grid must not erase a sub-pixel-wide strip."""
     thin = strip((-0.05, 0.05), (-90, 90), res=0.5)     # far finer than res=0.5 deg
