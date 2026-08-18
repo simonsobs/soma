@@ -37,6 +37,7 @@ import numpy as np
 from pixell import curvedsky, enmap
 from pywiggle import _wiggle
 from scipy.ndimage import map_coordinates
+from scipy.integrate import trapezoid
 
 from . import maps, stats
 
@@ -386,11 +387,11 @@ def integrated_multipole_fractions(frac, ell, a_m):
         return np.zeros(mmax + 1, dtype=float)
         
     scalar_fractions = np.empty(mmax + 1, dtype=float)
-    denominator = np.trapezoid(ring_weights[valid], ell[valid])
+    denominator = trapezoid(ring_weights[valid], ell[valid])
     
     for m in range(mmax + 1):
         if denominator > 0:
-            numerator = np.trapezoid(frac[m, valid] * ring_weights[valid], ell[valid])
+            numerator = trapezoid(frac[m, valid] * ring_weights[valid], ell[valid])
             scalar_fractions[m] = float(numerator / denominator)
         else:
             scalar_fractions[m] = 0.0
