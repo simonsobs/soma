@@ -1,17 +1,81 @@
-"""
-Utilities involving harmonic transforms.
+"""Utilities involving harmonic transforms.
+
 Features include:
-- azimuthal Fourier decompositions
-- wavelet scattering transforms
-- direct catalog to SHTs that skip pixelization
+
+- azimuthal Fourier decompositions of flat-sky images (``azimuthal_modes``,
+  ``azimuthal_image`` and the metrics on their modes)
+- multipole stacking on the sphere, with catalog transforms that skip pixelization
+  (``catalog_spin_alm``, ``multipole_cross_spectrum``, ``beam_multipole``, ``harm2profile``)
+- directional wavelet scattering covariances on the sphere (``ScatterTransform``,
+  ``CARScatterTransform``, ``HealpixScatterTransform``)
+
+Conventions
+-----------
+
+The two halves of the module measure azimuth differently:
+
+- On the flat sky, the azimuth psi runs from +x toward +y of the map, which on a sky-frame
+  map is from +RA toward +dec (``azimuthal_modes``, ``mode_orientation``).
+- On the sphere, azimuth and position angle run from local north toward local east
+  (``catalog_spin_alm``, ``beam_multipole``).
+
+For a sky-frame map the two are related by PA = 90 deg - psi.
+
+Wavelet scattering covariances
+------------------------------
+
+``ScatterTransform`` computes the statistics of ``s2scat.scatter`` (mean, variance, S1, P00,
+C01 and C11, in the same order and normalisation) for a real field given its harmonic
+coefficients. ``CARScatterTransform`` and ``HealpixScatterTransform`` take a CAR or a HEALPix
+map instead. Each of them also takes a second field, and then returns cross statistics.
+
+Constructing an object is the expensive step: the filters, geometries and weights of every
+wavelet scale are prepared once, so reuse one object for many fields at the same band limit.
+
+There are two backends. The numpy backend runs on the CPU. The JAX backend
+(``backend="jax"``) is a jitted, differentiable function that runs wherever its input array
+lives; it is optional, works in double precision, and needs pixell and ducc built with JAX
+support, as described in ``docs/examples/scattering_des.ipynb``. The environment variable
+``SOMA_SCATTERING_BACKEND`` sets the default: ``numpy``, ``jax``, or ``auto`` (the default),
+which chooses JAX only where it runs on a GPU, since on a CPU both backends call the same
+transforms.
+
+Outline of the transform:
+
+* The directional wavelets of s2wav, psi^j_{ln} = kappa_j(l) s_{ln}, are built
+  here in numpy. For N directions only the orders
+  n < N with n + N odd are non-zero; for N = 3 these are n = 0 and n = 2.
+* The wavelet coefficients W^j(gamma) for the 2N-1 orientations gamma are a
+  Wigner transform, which for a real field reduces to one spin-0 and one
+  spin-n synthesis per active order n, combined by a fixed steering matrix
+  (``ScatterTransform.wavelet``).
+* The scattering covariances are computed from ``|W|`` with a second wavelet layer
+  and quadrature weighted pixel sums (``ScatterTransform.from_alm``).
+
+Typical use::
+
+    from soma.harmonic import ScatterTransform, CARScatterTransform, HealpixScatterTransform
+
+    st = ScatterTransform(lmax, N=3, J_min=2, mask=mask)      # input: healpy alm, any lmax
+    st = CARScatterTransform(shape, wcs, mask=mask)           # input: enmap on (shape, wcs)
+    st = HealpixScatterTransform(lmax, niter=3, mask=hpmask)  # input: HEALPix map, ring ordering
+    mean, var, S1, P00, C01, C11 = st(x)
+    mean, var, S1, P00, C01, C11 = st.from_alm(alm)           # alm directly, on any of the three
+    mean, var, S1, P00, C01, C11 = st(x, y)                   # cross statistics of two fields
+    jax.config.update("jax_enable_x64", True)                 # needed by the JAX backend
+    st = ScatterTransform(lmax, backend="jax")                # jitted JAX function of the alm
+    grad = jax.grad(lambda a: st(a)[5].sum())(alm)            # differentiable
+    batched = jax.vmap(st.from_alm)                           # batches of fields
 """
+
+import os
+from math import comb, isqrt
 
 import ducc0
 import numpy as np
 from pixell import curvedsky, enmap, reproject, utils, wcsutils
 from scipy.ndimage import map_coordinates
-import os
-from math import comb, isqrt
+
 from . import maps, stats
 
 __all__ = [
@@ -27,10 +91,11 @@ __all__ = [
     "multipole_cross_spectrum",
     "beam_multipole",
     "harm2profile",
+    "analytical_tf",
     # Wavelet scattering transforms on the sphere
     "ScatterTransform",
     "CARScatterTransform",
-    "HealpixScatterTransform",    
+    "HealpixScatterTransform",
 ]
 
 
@@ -113,7 +178,8 @@ def _modes_polar(fmap, dly, dlx, ell_grid, nphi, mmax, order, qu_to_eb):
     if qu_to_eb:
         t, q, u = rings
         c2, s2 = np.cos(2.0 * phi), np.sin(2.0 * phi)
-        rings = np.stack([t, q * c2 + u * s2, -q * s2 + u * c2])
+        # the sign that makes E and B those of enmap.map2harm(iau=False)
+        rings = np.stack([t, -(q * c2 + u * s2), q * s2 - u * c2])
     a_m = np.full(fmap.shape[:-2] + (mmax + 1, ell_grid.size), np.nan, dtype=complex)
     a_m[..., ok] = _ring_fft(rings, nphi, mmax)
     return a_m
@@ -128,7 +194,9 @@ def azimuthal_modes(imap, ell=None, mmax=6, center=None, nphi=None, order=3, qu_
 
     Because the ell spacings come signed from `enmap.lpixshape`,
     psi = atan2(ly, lx) is the azimuth of the map's own frame -- the sky
-    frame, +RA toward +dec, for a map in it.
+    frame, +RA toward +dec, for a map in it. This differs from the north
+    toward east azimuth used on the sphere (see the Conventions section of
+    the module documentation).
 
     Parameters
     ----------
@@ -153,7 +221,9 @@ def azimuthal_modes(imap, ell=None, mmax=6, center=None, nphi=None, order=3, qu_
     qu_to_eb : take a 3-component input as (T, Q, U) and rotate Q/U to
         E/B on each ring before transforming, returning (T, E, B). The
         rotation uses the ring's own psi, where it is exact. Signs follow
-        E = Q cos2psi + U sin2psi, B = -Q sin2psi + U cos2psi.
+        E = -(Q cos2psi + U sin2psi), B = Q sin2psi - U cos2psi, which is
+        the E/B of pixell's ``enmap.map2harm`` with its default
+        ``iau=False``.
 
     Returns
     -------
@@ -213,8 +283,13 @@ def azimuthal_image(a_m, ell, shape, wcs, center=None, ms=None):
     a_m : (mmax+1, nl) or (ncomp, mmax+1, nl) modes, as returned by
         `azimuthal_modes`.
     ell : (nl,) the grid a_m is sampled on.
-    shape, wcs : geometry of the image to build. It need not be the one
-        the modes came from; only the Fourier grid it implies is used.
+    shape, wcs : geometry of the image to build. Its extent may differ
+        from that of the map the modes came from, but its pixel area must
+        be the same: `azimuthal_modes` uses an unnormalized FFT, so a_m
+        scales with the number of pixels per unit area, and a_m does not
+        record the pixel size. On pixels of a different area A_out the
+        result comes out multiplied by A_out / A_in; multiply by
+        A_in / A_out to undo it.
     center : pixel position to put the reconstruction at, undoing the
         `center` given to `azimuthal_modes`. None leaves it on pixel
         (0, 0), i.e. split across the corners.
@@ -311,6 +386,11 @@ def mode_orientation(a_m, m, deg=False):
     lies along the real-space *minor* axis, so an ellipse of position
     angle PA has arg(a_2) pointing at PA + 90. Reading a_2's phase as an
     axis without this correction reports the pattern turned 90 degrees.
+
+    The angle is the flat-sky azimuth of this module, not the astronomical
+    position angle (north toward east) used by the functions on the sphere:
+    on a sky-frame map PA = (90 deg - angle) modulo 360 deg / m. See the
+    Conventions section of the module documentation.
     """
     ang = (-np.angle(np.asarray(a_m)[..., m, :]) / m - 0.5 * np.pi) % (2.0 * np.pi / m)
     return np.rad2deg(ang) if deg else ang
@@ -358,12 +438,22 @@ def catalog_spin_alm(
 
         {}_m a^c = alm_E - i alm_B
 
-    the standard-convention complex coefficient: ducc's spin>0
-    transforms carry the conventional leading minus sign that its spin-0
-    transform does not, so the correction is +1 for m = 0 and -(-1)^m for
-    m >= 1. That is verified to machine precision for m <= 8 by
-    test_multipoles.py, against azimuthal moments evaluated directly on
-    rings around the source.
+    the standard-convention complex coefficient. The correction is +1 for
+    m = 0 and -(-1)^m for m >= 1, and has two parts. A unit E coefficient
+    at (l, 0) synthesizes, in ducc's spin-s transform, to
+    Q(theta) = -(-1)^s sqrt((2l+1)/4pi) d^l_{s0}(theta), where d^l_{s0} is
+    the Wigner-d function with the Condon-Shortley phase that
+    `harm2profile` resums with. The -1 is the conventional leading minus
+    sign of the E/B definition, which ducc's spin-0 transform does not
+    have; the (-1)^s is the phase between ducc's spin harmonics and
+    d^l_{s0}. The result is checked for m <= 8 against azimuthal moments
+    evaluated directly on rings around the source, in
+    tests/test_harmonic_sphere.py (test_ring_moments_match_the_estimator),
+    and the ducc convention itself in test_ducc_spin_sign_convention.
+
+    Azimuth is measured from local north toward local east, unlike the
+    flat-sky functions of this module (see the Conventions section of the
+    module documentation).
 
     Parameters
     ----------
@@ -372,7 +462,7 @@ def catalog_spin_alm(
     lmax : int
         Maximum multipole.
     m : int
-        Azimuthal multipole (the spin of the transform).
+        Azimuthal multipole (the spin of the transform); must be >= 0.
     weights : ndarray or None
         Per-source weights; uniform if None.
     alphas_deg : ndarray or None
@@ -392,6 +482,14 @@ def catalog_spin_alm(
         Complex alm arrays in healpy packing. alm_B is identically zero
         for m = 0.
     """
+    if m < 0:
+        raise ValueError(
+            f"m must be >= 0, got {m}. ducc's transform takes a spin >= 0, and "
+            "for a real map the negative-m coefficients add nothing: the "
+            "cross-spectrum obeys C^(-m) = conj(C^(m)). Pass abs(m) and "
+            "conjugate. Silently returning the +|m| answer here would have "
+            "flipped the sign of every sin(m phi) channel."
+        )
     ras = np.asarray(ras_deg, dtype=float)
     decs = np.asarray(decs_deg, dtype=float)
     w = np.ones(ras.size) if weights is None else np.asarray(weights, dtype=float)
@@ -426,6 +524,13 @@ def multipole_cross_spectrum(alm_map, alm_E, alm_B):
     alm2cl normalization (i.e. divided by 2l+1). Feeding this to
     harm2profile with the same m gives the real-space azimuthal moment of
     the stack, up to a factor 4 pi.
+
+    The result is complex for m > 0 and both halves are signal: the real
+    part is the cos(m phi) channel and the imaginary part -- the alm_B
+    term -- the sin(m phi) one, which is the parity channel
+    `beam_multipole` describes. Casting this to a real dtype before
+    resumming it throws away half the moment, and for the m = 2 of a
+    typical map the two halves are comparable in size.
 
     Parameters
     ----------
@@ -468,7 +573,9 @@ def beam_multipole(cl_m, cl_0, m):
         Complex C^(m)_ell, from `multipole_cross_spectrum` (decoupled or
         not, as long as cl_0 had the same treatment). The azimuth it was
         measured in must run from local north towards local east, which
-        is what `catalog_spin_alm` does.
+        is what `catalog_spin_alm` does. The flat-sky functions of this
+        module use a different azimuth (see the Conventions section of the
+        module documentation).
     cl_0 : ndarray
         The m = 0 spectrum, used as the normalization.
     m : int
@@ -499,80 +606,61 @@ def harm2profile(cl, betas_rad, m=0):
     Parameters
     ----------
     cl : ndarray
-        Spectrum starting at ell=0.
+        Spectrum starting at ell=0. May be complex, and for m > 0 usually
+        is: the resummation is linear, so a complex C^(m) resums to the
+        complex S_m whose imaginary part is the sin(m phi) channel.
     betas_rad : ndarray
         Radii in radians at which to evaluate the profile.
     m : int
-        Azimuthal multipole.
+        Azimuthal multipole; must be >= 0. Negative m carries no new
+        information for a real map, since ``S_-m = conj(S_m)``.
 
     Returns
     -------
     prof : ndarray
-        Profile evaluated at betas_rad.
+        Profile evaluated at betas_rad, complex if `cl` was.
     """
+    if m < 0:
+        raise ValueError(
+            f"m must be >= 0, got {m}. For a real map S_-m = conj(S_m), so pass "
+            "abs(m) and conjugate the result."
+        )
     from pywiggle import core as pcore
 
-    cl = np.asarray(cl, dtype=float)
+    # Not dtype=float: a complex cl is the normal case (multipole_cross_spectrum
+    # returns one) and casting it would silently discard the sin(m phi) half.
+    cl = np.asarray(cl)
     ells = np.arange(cl.size)
     dmat = pcore.compute_wigner_d_matrix(
-        cl.size - 1, abs(m), 0, np.cos(np.asarray(betas_rad, dtype=float))
+        cl.size - 1, m, 0, np.cos(np.asarray(betas_rad, dtype=float))
     )
     return dmat @ ((2.0 * ells + 1.0) / (4.0 * np.pi) * cl)
 
 
 def analytical_tf(modlmap, kfilter, bin_edges):
-    """
-    Simple analytic filter for k-space masking.
-    Inaccurate at low ell.
+    """Azimuthally binned transfer function of a flat-sky Fourier-space filter.
+
+    Averages the filter over annuli of constant ``|ell|``. For a filter that is either 0 or 1,
+    such as a k-space mask, this is the fraction of modes kept in each annulus and so the
+    transfer function of the power spectrum; for a general filter, pass ``kfilter**2`` to get
+    the power transfer function. Low-ell annuli hold few modes, so the estimate is noisy there.
+
+    Parameters
+    ----------
+    modlmap : ndarray
+        ``|ell|`` of every Fourier pixel, e.g. ``enmap.modlmap(shape, wcs)``.
+    kfilter : ndarray
+        The filter, with the shape of ``modlmap``.
+    bin_edges : ndarray
+        Increasing ``|ell|`` bin edges, as for ``stats.bin2D``.
+
+    Returns
+    -------
+    centers, tf : ndarray
+        Bin centers and the mean of the filter in each bin.
     """
     binner = stats.bin2D(modlmap, bin_edges)
     return binner.bin(np.asarray(kfilter, dtype=float))
-
-
-
-"""Directional scattering covariances on the sphere.
-
-``ScatterTransform`` computes the statistics of ``s2scat.scatter`` (mean, variance, S1, P00,
-C01 and C11, in the same order and normalisation) for a real field given its harmonic
-coefficients. ``CARScatterTransform`` and ``HealpixScatterTransform`` take a CAR or a HEALPix
-map instead. Each of them also takes a second field, and then returns cross statistics.
-
-Constructing an object is the expensive step: the filters, geometries and weights of every
-wavelet scale are prepared once, so reuse one object for many fields at the same band limit.
-
-There are two backends. The numpy backend runs on the CPU. The JAX backend
-(``backend="jax"``) is a jitted, differentiable function that runs wherever its input array
-lives; it is optional and needs pixell and ducc built with JAX support, as described in
-``examples/scattering_des.ipynb``. The environment variable ``SOMA_SCATTERING_BACKEND`` sets the
-default: ``numpy``, ``jax``, or ``auto`` (the default), which chooses JAX only where it runs on
-a GPU, since on a CPU both backends call the same transforms.
-
-Outline of the transform:
-
-* The directional wavelets of s2wav, psi^j_{ln} = kappa_j(l) s_{ln}, are built
-  here in numpy. For N directions only the orders
-  n < N with n + N odd are non-zero; for N = 3 these are n = 0 and n = 2.
-* The wavelet coefficients W^j(gamma) for the 2N-1 orientations gamma are a
-  Wigner transform, which for a real field reduces to one spin-0 and one
-  spin-n synthesis per active order n, combined by a fixed steering matrix
-  (``ScatterTransform.wavelet``).
-* The scattering covariances are computed from ``|W|`` with a second wavelet layer
-  and quadrature weighted pixel sums (``ScatterTransform.from_alm``).
-
-Typical use::
-
-    from soma.harmonic import ScatterTransform, CARScatterTransform, HealpixScatterTransform
-
-    st = ScatterTransform(lmax, N=3, J_min=2, mask=mask)      # input: healpy alm, any lmax
-    st = CARScatterTransform(shape, wcs, mask=mask)           # input: enmap on (shape, wcs)
-    st = HealpixScatterTransform(lmax, niter=3, mask=hpmask)  # input: HEALPix map, ring ordering
-    mean, var, S1, P00, C01, C11 = st(x)
-    mean, var, S1, P00, C01, C11 = st.from_alm(alm)           # alm directly, on any of the three
-    mean, var, S1, P00, C01, C11 = st(x, y)                   # cross statistics of two fields
-    st = ScatterTransform(lmax, backend="jax")                # jitted JAX function of the alm
-    grad = jax.grad(lambda a: st(a)[5].sum())(alm)            # differentiable
-    batched = jax.vmap(st.from_alm)                           # batches of fields
-"""
 
 
 # ----------------------------------------------------------------------------
@@ -628,6 +716,8 @@ def _directional_filters(L, N, lam=2.0):
     Returns a real array of shape (J_max+1, L, N). Only n with n + N odd are non-zero
     and psi[l, -n] = psi[l, n]. The scaling function is not needed by the transform.
     """
+    if N % 2 == 0:
+        raise ValueError("even N gives complex filters; this module supports odd N")
     k = _k_lam(L, lam)
     kappa = np.sqrt(np.clip(k[1:] - k[:-1], 0, None))  # (J+1, L)
     kappa *= np.sqrt((2 * np.arange(L) + 1) / 8.0) / np.pi
@@ -637,8 +727,6 @@ def _directional_filters(L, N, lam=2.0):
         for n in range(N):
             if (N + n) % 2 and n <= gamma:
                 s[ell, n] = np.sqrt(comb(gamma, (gamma - n) // 2) / 2**gamma)
-    if N % 2 == 0:
-        raise ValueError("even N gives complex filters; this module supports odd N")
     return np.ascontiguousarray(kappa[:, :, None] * s[None])
 
 
@@ -707,7 +795,6 @@ def _jax_available(device_only=False):
     automatic choice of backend asks for.
     """
     try:
-        import ducc0
         import jax
     except ImportError:
         return False
@@ -748,32 +835,51 @@ def _transfer_index(lmax_in, lmax_out):
 class ScatterTransform:
     """Scattering covariances of fields at one band limit, with everything reusable precomputed.
 
-    The base class takes harmonic coefficients (healpy ordering, any lmax, transferred to
-    lmax = L-1); ``CARScatterTransform`` and ``HealpixScatterTransform`` take maps. The wavelet
-    maps and statistics are always computed on full-sky CAR Fejer-1 geometries, one per scale,
-    optionally cut to the rows covering a footprint.
+    The base class takes harmonic coefficients (healpy ordering, any maximum multipole, which
+    is truncated or zero padded to lmax); ``CARScatterTransform`` and
+    ``HealpixScatterTransform`` take maps. The wavelet maps and statistics are always computed
+    on full-sky CAR Fejer-1 geometries, one per scale, optionally cut to the rows covering a
+    footprint.
 
-    Args:
-        lmax: band limit of the input; L = lmax + 1 rows in the finest CAR geometry.
-        N: azimuthal band limit; 2N-1 wavelet orientations (N must be odd).
-        J_min: lowest wavelet scale; the highest is log2 L.
-        mask: optional boolean mask: an enmap on any cylindrical geometry (zero outside it), an
-            array on the full-sky Fejer-1 geometry with L rows,
-            ``enmap.fullsky_geometry(shape=(L, 2 * L), variant="fejer1")``, or a HEALPix map
-            (ring ordering). It is resampled to every scale by nearest pixel. Pixel statistics
-            are restricted to it and, with ``cut``, every scale is restricted to the rows
-            covering it.
-        cut: restrict the per-scale geometries to the rows covering the mask, so that every
-            synthesis costs proportionally less (rows are kept whole; pixell pads nothing).
-            Needs a mask.
-        lmax_trunc: analyse ``|W_j2|`` only up to the band limit needed by the coarser scales.
-            The analysis is the quadrature weighted adjoint on the geometry of the scale, the
-            same on both backends. It is not exact for a map that is not band limited, as the
-            modulus of a wavelet map never is, so some power from higher multipoles folds into
-            the coefficients the second wavelet layer uses.
-        nthread: threads for the pixell transforms (default: all).
-        backend: "numpy" or "jax"; default from ``SOMA_SCATTERING_BACKEND``.
-        jit: compile the JAX transform on first use (JAX backend only).
+    The statistics are returned as the tuple (mean, var, S1, P00, C01, C11) of
+    ``s2scat.scatter``, in the same order and normalisation. As in s2scat, ``mean`` is
+    ``|f_00| / (2 sqrt(pi))``, the absolute value of the mean, so a field with a negative mean
+    is reported with a positive one.
+
+    Parameters
+    ----------
+    lmax : int
+        Maximum multipole of the analysis. The band limit is L = lmax + 1, which is also the
+        number of rows of the finest CAR geometry.
+    N : int, optional
+        Azimuthal band limit of the wavelets, giving 2N-1 orientations. Must be odd. Default 3.
+    J_min : int, optional
+        Lowest wavelet scale; the highest is ceil(log2 L). Default 2.
+    mask : ndarray, enmap or None, optional
+        Boolean mask: an enmap on any cylindrical geometry (zero outside it), an array on the
+        full-sky Fejer-1 geometry with L rows,
+        ``enmap.fullsky_geometry(shape=(L, 2 * L), variant="fejer1")``, or a HEALPix map (ring
+        ordering). It is resampled to every scale by nearest pixel. Pixel statistics are
+        restricted to it and, with ``cut``, every scale is restricted to the rows covering it.
+    cut : bool, optional
+        Restrict the per-scale geometries to the rows covering the mask, so that every
+        synthesis costs proportionally less (rows are kept whole). Needs a mask. Default False.
+    lmax_trunc : bool, optional
+        Analyse ``|W_j2|`` only up to the band limit needed by the coarser scales. The analysis
+        is the quadrature weighted adjoint on the geometry of the scale, the same on both
+        backends. It is not exact for a map that is not band limited, as the modulus of a
+        wavelet map never is, so some power from higher multipoles folds into the coefficients
+        the second wavelet layer uses. Default True.
+    nthreads : int, optional
+        Threads for the pixell transforms; 0 (the default) uses all hardware threads. pixell
+        gives the environment variable ``OMP_NUM_THREADS``, when it is set, precedence over
+        this argument.
+    backend : {"numpy", "jax"} or None, optional
+        Default from the environment variable ``SOMA_SCATTERING_BACKEND``. The JAX backend
+        works in double precision and needs ``jax.config.update("jax_enable_x64", True)`` to
+        have been called before the object is created.
+    jit : bool, optional
+        Compile the JAX transform on first use (JAX backend only). Default True.
     """
 
     def __init__(
@@ -784,7 +890,7 @@ class ScatterTransform:
         mask=None,
         cut=False,
         lmax_trunc=True,
-        nthread=None,
+        nthreads=0,
         backend=None,
         jit=True,
     ):
@@ -805,7 +911,7 @@ class ScatterTransform:
                 "for a GPU)"
             )
         self.L, self.N, self.J_min, self.J, self.ndir = L, N, J_min, _j_max(L), 2 * N - 1
-        self.lmax_trunc, self.nthread = lmax_trunc, nthread
+        self.lmax_trunc, self.nthreads = lmax_trunc, nthreads
         J = self.J
         psi, G, self.orders = _directional_filters(L, N), _steering_matrix(N), _active_orders(N)
         self.ncomp = sum(1 if n == 0 else 2 for n in self.orders)
@@ -863,7 +969,11 @@ class ScatterTransform:
             import jax
             import jax.numpy as jnp
 
-            jax.config.update("jax_enable_x64", True)
+            if not jax.config.read("jax_enable_x64"):
+                raise ValueError(
+                    "the JAX backend works in double precision: call "
+                    'jax.config.update("jax_enable_x64", True) before creating the transform'
+                )
             self.xp = jnp
             self.G, self.fl, self.w = (
                 jnp.asarray(G),
@@ -910,14 +1020,14 @@ class ScatterTransform:
             # an explicit component axis: (a) for spin 0, the pair (E, B = 0) otherwise
             a = a[None] if spin == 0 else self.xp.stack([a, self.xp.zeros_like(a)])
             return curvedsky.alm2map(
-                a, self.rgeom[Lj], spin=[spin], ainfo=self.ainfos[Lj], nthread=self.nthread
+                a, self.rgeom[Lj], spin=[spin], ainfo=self.ainfos[Lj], nthread=self.nthreads
             ).arr
         n = 1 if spin == 0 else 2
         if spin > 0:
             self.spinbuf[Lj][0] = a
             a = self.spinbuf[Lj]
         return curvedsky.alm2map(
-            a, self.comps[Lj][k : k + n], spin=[spin], ainfo=self.ainfos[Lj], nthread=self.nthread
+            a, self.comps[Lj][k : k + n], spin=[spin], ainfo=self.ainfos[Lj], nthread=self.nthreads
         )
 
     def _transfer(self, a, lmax_in, Lj):
@@ -932,7 +1042,7 @@ class ScatterTransform:
         wcs = self.geoms[self.Lj[j2]][1]
         m = enmap.devmap(m, wcs) if self.backend == "jax" else enmap.ndmap(m, wcs)
         return curvedsky.map2alm(
-            m, ainfo=self.binfos[j2], spin=[0], method="cyl", nthread=self.nthread
+            m, ainfo=self.binfos[j2], spin=[0], method="cyl", nthread=self.nthreads
         )
 
     # ---- the transform -----------------------------------------------------------------------
@@ -1030,32 +1140,59 @@ class ScatterTransform:
         return self._transfer(alm, lmax_in, self.L)
 
     def __call__(self, alm, alm2=None, timer=None):
-        """Return (mean, var, S1, P00, C01, C11) for alm in healpy ordering (any lmax).
+        """Scattering statistics of harmonic coefficients.
 
-        The alm are truncated or zero padded to lmax = L-1, on either backend; JAX arrays stay
-        differentiable through this.
+        Parameters
+        ----------
+        alm : ndarray
+            Harmonic coefficients of a real field in healpy ordering, at any maximum
+            multipole. They are truncated or zero padded to the lmax of this object, on either
+            backend; JAX arrays stay differentiable through this.
+        alm2 : ndarray or None, optional
+            A second field, for cross statistics (see ``from_alm``).
+        timer : object or None, optional
+            An object with a ``tick(msg)`` method, called as each stage finishes. Only used by
+            the numpy backend: the JAX backend runs as one compiled function.
 
-        With a second field ``alm2`` the cross statistics are returned (see ``from_alm``).
-        ``timer`` is an optional object with a ``tick(msg)`` method, called as each stage
-        finishes (numpy backend only: the JAX backend runs as one compiled function).
+        Returns
+        -------
+        mean, var, S1, P00, C01, C11
+            The statistics, as described for the class and for ``from_alm``.
         """
         return self.from_alm(
             self._prepare(alm), None if alm2 is None else self._prepare(alm2), timer
         )
 
     def from_alm(self, alm, alm2=None, timer=None):
-        """Statistics from healpy ordered alm with exactly lmax = L-1 (no layout transfer).
+        """Scattering statistics of alm that already have the layout of this object.
 
         Available on every subclass, so a map based object can also be fed alm directly.
+        Unlike ``__call__`` there is no layout transfer, which makes this the function to pass
+        to ``jax.vmap`` or ``jax.grad``.
 
-        With a second field ``alm2`` (same layout) the cross statistics of the pair (f, g) are
-        returned in the same flattened layout: ``P00`` = ``<W f . W g>``,
-        ``C01`` = ``<W f . W|W g|>`` (the first field enters linearly, the second through the
-        modulus), ``C11`` =
+        With a second field ``alm2`` the cross statistics of the pair (f, g) are returned in
+        the same flattened layout: ``P00`` = ``<W f . W g>``, ``C01`` = ``<W f . W|W g|>``
+        (the first field enters linearly, the second through the modulus), ``C11`` =
         ``<W|W f| . W|W g|>``, and ``var`` the cross variance from the harmonic coefficients;
         ``mean`` and ``S1``, which are single-field quantities, are returned for both fields
         stacked along a leading axis of length 2. With ``alm2`` omitted or identical to ``alm``
         the auto statistics of s2scat are recovered.
+
+        Parameters
+        ----------
+        alm : ndarray
+            Harmonic coefficients of a real field in healpy ordering, with maximum multipole
+            exactly lmax = L - 1.
+        alm2 : ndarray or None, optional
+            A second field with the same layout, for cross statistics.
+        timer : object or None, optional
+            An object with a ``tick(msg)`` method, called as each stage finishes. It is
+            ignored on the JAX backend, which runs as one compiled function.
+
+        Returns
+        -------
+        mean, var, S1, P00, C01, C11
+            The statistics, as described for the class and above.
         """
         if self.backend == "jax":
             return self._fn(alm) if alm2 is None else self._fn(alm, alm2)
@@ -1071,16 +1208,22 @@ class CARScatterTransform(ScatterTransform):
     ``cut=True`` also restricts every wavelet scale to the rows covering it, which makes the
     transforms cheaper.
 
-    Args:
-        shape, wcs: geometry of the input maps.
-        lmax: band limit of the analysis. Default: round(180 deg / pixel height) - 1, which is
-            L - 1 for ``enmap.fullsky_geometry(shape=(L, 2 * L))``.
-        mask: optional mask. An enmap on any cylindrical geometry, an array of shape
-            ``shape[-2:]`` on (shape, wcs), or a HEALPix map (ring ordering); it is combined
-            with the footprint of (shape, wcs).
-        niter: Jacobi iterations of ``curvedsky.map2alm``. 0 is exact on full-sky geometries
-            with quadrature weights, such as Fejer-1 and Clenshaw-Curtis; more iterations
-            improve the analysis on other full-sky geometries.
+    Parameters
+    ----------
+    shape, wcs : tuple, astropy.wcs.WCS
+        Geometry of the input maps.
+    lmax : int or None, optional
+        Maximum multipole of the analysis. Default: round(180 deg / pixel height) - 1, which is
+        L - 1 for ``enmap.fullsky_geometry(shape=(L, 2 * L))``.
+    mask : ndarray, enmap or None, optional
+        An enmap on any cylindrical geometry, an array of shape ``shape[-2:]`` on
+        (shape, wcs), or a HEALPix map (ring ordering). It is combined with the footprint of
+        (shape, wcs).
+    niter : int, optional
+        Jacobi iterations of ``curvedsky.map2alm``. 0 (the default) is exact on full-sky
+        geometries with quadrature weights, such as Fejer-1 and Clenshaw-Curtis; more
+        iterations improve the analysis on other full-sky geometries.
+    **kwargs
         Other arguments as for ``ScatterTransform``.
     """
 
@@ -1101,7 +1244,7 @@ class CARScatterTransform(ScatterTransform):
             m.wcs, self.map_wcs, tol=1e-10
         ):
             raise ValueError("the map is not on the geometry this transform was built for")
-        return curvedsky.map2alm(m, ainfo=self.ainfo, niter=self.niter, nthread=self.nthread)
+        return curvedsky.map2alm(m, ainfo=self.ainfo, niter=self.niter, nthread=self.nthreads)
 
     def __call__(self, imap, imap2=None, timer=None):
         """Return the statistics of a real map on this geometry (cross statistics with imap2).
@@ -1116,10 +1259,14 @@ class CARScatterTransform(ScatterTransform):
 class HealpixScatterTransform(ScatterTransform):
     """Scattering covariances of HEALPix maps (ring ordering), analysed with ``healpy.map2alm``.
 
-    Args:
-        lmax: band limit of the analysis.
-        niter: iterations of ``healpy.map2alm`` (0: plain quadrature, accurate to 1e-6 in the
-            statistics for nside >= L/2; 3 gives 1e-11).
+    Parameters
+    ----------
+    lmax : int
+        Maximum multipole of the analysis; the band limit is L = lmax + 1.
+    niter : int, optional
+        Iterations of ``healpy.map2alm``. 0 (the default) is plain quadrature, accurate to 1e-6
+        in the statistics for nside >= L/2; 3 gives 1e-11.
+    **kwargs
         Other arguments as for ``ScatterTransform``; ``mask`` may be a HEALPix map.
     """
 

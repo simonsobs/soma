@@ -53,7 +53,7 @@ docs = [
 ]
 dev = [
     "soma[test,docs]",
-    "ruff",
+    "ruff==0.16.7",  # the version CI lints with
     "build",
 ]
 

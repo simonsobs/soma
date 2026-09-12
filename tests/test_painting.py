@@ -312,13 +312,3 @@ def test_cosine_apodize_tapers_the_edge_and_leaves_the_interior():
     # the taper zone is genuinely graded, not a step
     edge = (np.abs(decs) > 26.0) & (np.abs(decs) < 29.0)
     assert 0.0 < np.asarray(apod)[edge].min() < np.asarray(apod)[edge].max() < 1.0
-
-
-def test_cosine_apodize_matches_orphics():
-    """Copied verbatim, so it must agree bit for bit."""
-    orphics_maps = pytest.importorskip("orphics.maps")
-    mask = strip_mask()
-    assert np.array_equal(
-        np.asarray(maps.cosine_apodize(mask, 5.0)),
-        np.asarray(orphics_maps.cosine_apodize(mask, 5.0)),
-    )

@@ -21,8 +21,9 @@ def exact_area(dec_range, ra_range=(-180, 180)):
 
 
 def test_area_matches_analytic(tmp_path):
-    areas = plot_footprints(strip((-30, 10), (-60, 60)), labels=["patch"],
-                            output=str(tmp_path / "a.png"), nframes=1)
+    areas = plot_footprints(
+        strip((-30, 10), (-60, 60)), labels=["patch"], output=str(tmp_path / "a.png"), nframes=1
+    )
     assert areas["patch"] == pytest.approx(exact_area((-30, 10), (-60, 60)), rel=0.02)
 
 
@@ -66,12 +67,13 @@ def test_inputs_dict_list_and_files(tmp_path):
 
 def test_fullsky_map_covers_the_sphere(tmp_path):
     shape, wcs = enmap.fullsky_geometry(res=2 * utils.degree)
-    areas = plot_footprints(enmap.ones(shape, wcs), labels=["all sky"],
-                            output=str(tmp_path / "a.png"), nframes=1)
+    areas = plot_footprints(
+        enmap.ones(shape, wcs), labels=["all sky"], output=str(tmp_path / "a.png"), nframes=1
+    )
     assert areas["all sky"] == pytest.approx(41253.0, rel=0.01)
 
 
-@pytest.mark.parametrize("nx", [10800, 9999])       # divides the working grid, or not
+@pytest.mark.parametrize("nx", [10800, 9999])  # divides the working grid, or not
 def test_wrapping_map_has_no_seam(nx):
     """A map going all the way round in RA must land on the grid unbroken.
 
@@ -80,6 +82,7 @@ def test_wrapping_map_has_no_seam(nx):
     crop, which used to widen the same gap.
     """
     from soma import io as soma_io
+
     box = np.array([[-60, 180], [20, -180]]) * utils.degree
     shape, wcs = enmap.geometry(pos=box, res=360.0 / nx * utils.degree, proj="car")
     gshape, gwcs = enmap.fullsky_geometry(res=0.2 * utils.degree, proj="car")
@@ -91,22 +94,25 @@ def test_wrapping_map_has_no_seam(nx):
 def test_partial_map_does_not_wrap_round_the_sky():
     """The seam padding must not carry a map's own edge round to the far side."""
     from soma import io as soma_io
+
     gshape, gwcs = enmap.fullsky_geometry(res=0.2 * utils.degree, proj="car")
     mask = soma_io._footprint(strip((-10, 10), (-40, 40)), 0.0, gshape, gwcs, 0.2)
-    ra = gwcs.wcs.crval[0] + (np.nonzero(mask.any(0))[0] + 1 - gwcs.wcs.crpix[0]) \
-        * gwcs.wcs.cdelt[0]
+    ra = (
+        gwcs.wcs.crval[0] + (np.nonzero(mask.any(0))[0] + 1 - gwcs.wcs.crpix[0]) * gwcs.wcs.cdelt[0]
+    )
     assert abs(ra).max() == pytest.approx(40, abs=0.3)
 
 
 def test_downgrade_preserves_thin_coverage(tmp_path):
     """Max-pooling to the working grid must not erase a sub-pixel-wide strip."""
-    thin = strip((-0.05, 0.05), (-90, 90), res=0.5)     # far finer than res=0.5 deg
+    thin = strip((-0.05, 0.05), (-90, 90), res=0.5)  # far finer than res=0.5 deg
     areas = plot_footprints(thin, labels=["thin"], output=None, nframes=1, res=0.5)
     assert areas["thin"] > 0
 
 
 def test_writes_gif_and_still(tmp_path):
     from PIL import Image
+
     maps = {"A": strip((-40, 0), (0, 120)), "B": strip((0, 40), (120, 240))}
 
     gif = tmp_path / "spin.gif"
@@ -116,14 +122,16 @@ def test_writes_gif_and_still(tmp_path):
         assert im.size[0] == 180
 
     png = tmp_path / "still.png"
-    plot_footprints(maps, output=str(png), nframes=1, size=180, galactic_plane=True,
-                    ra_units="deg", ra_sign=1)
+    plot_footprints(
+        maps, output=str(png), nframes=1, size=180, galactic_plane=True, ra_units="deg", ra_sign=1
+    )
     assert png.stat().st_size > 0
 
 
 def test_rotation_actually_changes_the_view(tmp_path):
     """Guard the RA index shift: frames must differ, and a full turn must close."""
     from soma import io as soma_io
+
     maps = {"A": strip((-40, 0), (0, 60))}
     frames = []
     real_write = soma_io._write_gif
@@ -149,6 +157,7 @@ def test_mismatched_labels_and_colors_are_rejected():
 def test_backdrop_is_drawn_under_the_footprints(tmp_path):
     """A sky texture must change the bare sky and leave the fills alone."""
     from soma import io as soma_io
+
     sky = enmap.fullsky_geometry(res=2 * utils.degree)
     dec = enmap.posmap(*sky)[0] / utils.degree
     texture = enmap.enmap(np.exp(-0.5 * (dec / 20.0) ** 2) + 0.01, sky[1])
@@ -161,10 +170,12 @@ def test_backdrop_is_drawn_under_the_footprints(tmp_path):
         def spy(ax, ids, *a, **k):
             frames[name] = ids.copy()
             return real_draw(ax, ids, *a, **k)
+
         soma_io._draw = spy
         try:
-            plot_footprints(maps, output=str(tmp_path / f"{name}.png"), nframes=1,
-                            size=200, backdrop=bd)
+            plot_footprints(
+                maps, output=str(tmp_path / f"{name}.png"), nframes=1, size=200, backdrop=bd
+            )
         finally:
             soma_io._draw = real_draw
 
@@ -174,13 +185,14 @@ def test_backdrop_is_drawn_under_the_footprints(tmp_path):
     assert np.array_equal(frames["plain"], frames["dust"])
     a = np.asarray(Image.open(tmp_path / "plain.png").convert("RGB"), dtype=int)
     b = np.asarray(Image.open(tmp_path / "dust.png").convert("RGB"), dtype=int)
-    assert np.abs(a - b).sum() > 0            # ... but the sky does look different
+    assert np.abs(a - b).sum() > 0  # ... but the sky does look different
 
 
 def test_backdrop_auto_falls_back_when_absent(tmp_path, monkeypatch):
     monkeypatch.setenv("SOMA_SKY_BACKDROP", str(tmp_path / "nope.fits"))
-    areas = plot_footprints(strip((-20, 20), (0, 60)), labels=["x"], output=None,
-                            nframes=1, size=160, backdrop="auto")
+    areas = plot_footprints(
+        strip((-20, 20), (0, 60)), labels=["x"], output=None, nframes=1, size=160, backdrop="auto"
+    )
     assert areas["x"] > 0
 
 
@@ -193,22 +205,25 @@ def test_make_backdrop_rotates_galactic_to_equatorial(tmp_path):
 
     nside = 64
     b = 90.0 - np.degrees(hp.pix2ang(nside, np.arange(hp.nside2npix(nside)))[0])
-    hp.write_map(str(tmp_path / "gal.fits"), np.exp(-0.5 * (b / 5.0) ** 2) + 0.01,
-                 coord="G", overwrite=True)
+    hp.write_map(
+        str(tmp_path / "gal.fits"), np.exp(-0.5 * (b / 5.0) ** 2) + 0.01, coord="G", overwrite=True
+    )
 
     omap, got_nside, _ = make_backdrop(str(tmp_path / "gal.fits"), res=1.0)
     assert got_nside == nside
     assert omap.shape == (180, 360)
 
     gl = np.arange(0.0, 360.0, 15.0)
-    eq = coordinates.transform("gal", "equ",
-                               np.array([gl, gl * 0]) * utils.degree) / utils.degree
+    eq = coordinates.transform("gal", "equ", np.array([gl, gl * 0]) * utils.degree) / utils.degree
     for ra, dec in zip(*eq, strict=True):
-        col = int(round(enmap.sky2pix(omap.shape, omap.wcs,
-                                      np.array([[dec], [ra]]) * utils.degree)[1][0]))
+        col = int(
+            round(enmap.sky2pix(omap.shape, omap.wcs, np.array([[dec], [ra]]) * utils.degree)[1][0])
+        )
         peak = int(np.argmax(np.asarray(omap)[:, col % omap.shape[1]]))
-        dec_peak = enmap.pix2sky(omap.shape, omap.wcs,
-                                 np.array([[peak], [col]], float))[0][0] / utils.degree
+        dec_peak = (
+            enmap.pix2sky(omap.shape, omap.wcs, np.array([[peak], [col]], float))[0][0]
+            / utils.degree
+        )
         assert abs(dec_peak - dec) < 3.0, f"ridge off by {dec_peak - dec:.1f} deg"
 
 
@@ -226,8 +241,23 @@ def test_cli_renders_and_reports_areas(tmp_path, capsys):
     enmap.write_map(str(src), strip((-30, 10), (-60, 60)))
     out = tmp_path / "cli.png"
 
-    assert main([str(src), "-o", str(out), "--nframes", "1", "--size", "160",
-                 "--backdrop", "none", "--galactic-plane"]) == 0
+    assert (
+        main(
+            [
+                str(src),
+                "-o",
+                str(out),
+                "--nframes",
+                "1",
+                "--size",
+                "160",
+                "--backdrop",
+                "none",
+                "--galactic-plane",
+            ]
+        )
+        == 0
+    )
     printed = capsys.readouterr().out
     assert "patch_ivar" in printed and "deg^2" in printed
     assert out.stat().st_size > 0
@@ -236,10 +266,9 @@ def test_cli_renders_and_reports_areas(tmp_path, capsys):
 def test_cli_rejects_bad_arguments(tmp_path):
     from soma.scripts.footprints import build_parser, main
 
-    with pytest.raises(SystemExit):                 # unknown --ra-units choice
+    with pytest.raises(SystemExit):  # unknown --ra-units choice
         build_parser().parse_args(["x.fits", "--ra-units", "radians"])
     src = tmp_path / "a_ivar.fits"
     enmap.write_map(str(src), strip((-10, 10), (0, 30)))
     with pytest.raises(ValueError, match="labels"):  # two names, one map
-        main([str(src), "-o", str(tmp_path / "x.png"), "--nframes", "1",
-              "--labels", "one,two"])
+        main([str(src), "-o", str(tmp_path / "x.png"), "--nframes", "1", "--labels", "one,two"])

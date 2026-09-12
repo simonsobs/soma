@@ -138,7 +138,7 @@ def simulate_pol_beam(
 
     T is a circular Gaussian. The polarized response is the spin-2 pattern
 
-        (Q + iU)(r, theta) = - p(r) exp[i (2 theta + 2 chi)],
+        (Q + iU)(r, theta) = p(r) exp[i (2 theta + 2 chi)],
         p(r) = amplitude * eps * (r / sqrt(2) sigma)^2 * exp(-r^2/2 sigma^2),
 
     i.e. a tangential/radial pattern rotated by the mixing angle chi:
@@ -149,7 +149,9 @@ def simulate_pol_beam(
         gamma_B(ell) = eps (sigma ell / sqrt 2)^2 sin 2chi.
 
     theta and chi are angles in the stamp's frame, from +x toward +y
-    (sky frame -- +RA toward +dec -- on a sky-frame stamp).
+    (sky frame -- +RA toward +dec -- on a sky-frame stamp). E and B follow
+    pixell's default convention (``enmap.map2harm`` with ``iau=False``), as
+    in `beam_modes`.
 
     """
     wcs, dy, dx = _sim_coords(shape, pix_arcmin, offset_arcmin, proj)
@@ -160,8 +162,8 @@ def simulate_pol_beam(
     T = amplitude * env
     p = amplitude * eps * (r / (np.sqrt(2.0) * sig)) ** 2 * env
     chi = chi_deg * utils.degree
-    Q = -p * np.cos(2.0 * th + 2.0 * chi)
-    U = -p * np.sin(2.0 * th + 2.0 * chi)
+    Q = p * np.cos(2.0 * th + 2.0 * chi)
+    U = p * np.sin(2.0 * th + 2.0 * chi)
     return enmap.enmap(np.stack([T, Q, U]), wcs)
 
 
@@ -386,7 +388,8 @@ def beam_modes(bmap, ell=None, mmax=6, center="fit", rmax_arcmin=None, nphi=None
     A (3, Ny, Nx) T, Q, U stack is decomposed in the same call: the three
     components share one recentering phase, the flat-sky E/B rotation is
     applied on each uniform-psi ring, and `b_m` comes back as (T, E, B)
-    with the leakage beams alongside it.
+    with the leakage beams alongside it. E and B follow pixell's default
+    convention (``enmap.map2harm`` with ``iau=False``).
 
     Parameters
     ----------

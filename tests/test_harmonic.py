@@ -114,6 +114,31 @@ def test_qu_to_eb_needs_three_components_and_rotates_them():
         harmonic.azimuthal_modes(centred(np.stack([tqu[0], tqu[1]]), wcs), qu_to_eb=True)
 
 
+@pytest.mark.parametrize("proj", ["tan", "car"])
+def test_qu_to_eb_matches_pixell_map2harm(proj):
+    """E and B are those of enmap.map2harm with its default iau=False.
+
+    The reference rotates Q/U on the Fourier grid with pixell and decomposes the resulting E
+    and B maps without rotation; the two routes only differ in where the ring interpolation
+    happens, so they agree closely, and the correlation pins the sign.
+    """
+    shape, wcs = geom(proj=proj)
+    dy, dx = maps.real_grid(shape, wcs)
+    s = 3.0 * utils.arcmin
+    env = np.exp(-0.5 * (dy**2 + dx**2) / s**2)
+    y, x = dy / s, dx / s
+    tqu = centred(np.stack([env, (0.3 + x**2 - 0.5 * x * y) * env, (y - 0.7 * x * y) * env]), wcs)
+    harm = enmap.map2harm(tqu, normalize=False, iau=False)
+    teb = centred(np.fft.ifft2(np.asarray(harm)).real, wcs)
+    # from 6 Fourier pixels out, where the rotation hardly varies between neighbouring pixels
+    ell = np.linspace(1000.0, 3000.0, 20)
+    got = harmonic.azimuthal_modes(tqu, ell=ell, center=CENTRE, qu_to_eb=True)["a_m"][1:]
+    ref = harmonic.azimuthal_modes(teb, ell=ell, center=CENTRE)["a_m"][1:]
+    assert np.abs(got - ref).max() < 1e-3 * np.abs(ref).max()
+    corr = np.vdot(ref, got).real / (np.linalg.norm(ref) * np.linalg.norm(got))
+    assert corr > 0.9999
+
+
 def test_rings_past_the_grid_limit_are_nan():
     shape, wcs = geom(64)
     r, _ = rtheta(shape, wcs)

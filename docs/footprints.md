@@ -8,7 +8,8 @@ from soma.io import plot_footprints
 
 areas = plot_footprints(
     {"ACT DR6": "act_ivar.fits", "SO SAT": "so_ivar.fits", "Deep56": deep56_ivar},
-    output="footprints.gif", galactic_plane=True,
+    output="footprints.gif",
+    galactic_plane=True,
 )
 # {'ACT DR6': 18043.2, 'SO SAT': 16511.9, 'Deep56': 834.7}   square degrees
 ```

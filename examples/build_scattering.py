@@ -22,8 +22,8 @@ CELLS = [
         MD,
         r"""# Scattering covariances in the DES footprint
 
-`soma.harmonic` has classes that compute directional scattering covariances 
-(similar to [s2scat](https://github.com/astro-informatics/s2scat)): the mean and variance of a field, the
+`soma.harmonic` has classes that compute directional scattering covariances (similar to
+[s2scat](https://github.com/astro-informatics/s2scat)): the mean and variance of a field, the
 mean modulus (S1) and power (P00) of its wavelet transform, and the covariances C01 and C11.
 These contain non-Gaussian information that a power spectrum cannot see. The input can be
 harmonic coefficients (`ScatterTransform`), a CAR map (`CARScatterTransform`) or a HEALPix
@@ -92,6 +92,7 @@ if BACKEND == "jax":
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")  # jax and ducc share a GPU
     import jax  # before pixell, so that jax's CUDA libraries are the ones loaded
 
+    jax.config.update("jax_enable_x64", True)  # the JAX backend works in double precision
     print("JAX runs on", jax.default_backend())""",
     ),
     (
@@ -105,7 +106,7 @@ from matplotlib.colors import TwoSlopeNorm
 from matplotlib.path import Path
 from pixell import curvedsky, enmap
 
-from soma import maps, harmonic
+from soma import harmonic, maps
 
 L = 2048  # band limit
 shape, wcs = enmap.fullsky_geometry(shape=(L, 2 * L), variant="fejer1")
