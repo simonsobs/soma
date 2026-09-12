@@ -9,7 +9,7 @@ pip install soma
 ```
 
 This pulls in the runtime dependencies: `numpy`, `scipy`, `pyyaml`,
-[`pixell`](https://pixell.readthedocs.io) and
+`astropy`, [`pixell`](https://pixell.readthedocs.io) and
 [`healpy`](https://healpy.readthedocs.io). Binary wheels exist for `pixell` and
 `healpy` on Linux and macOS; on other platforms they are built from source and
 require a working C/Fortran toolchain.
@@ -28,7 +28,8 @@ The optional dependency groups are:
 : `pytest` and `pytest-cov` for running the test suite.
 
 `docs`
-: `sphinx`, `furo` and `myst-parser` for building this documentation.
+: `sphinx`, the `furo` theme, `myst-nb`, `sphinx-copybutton` and `sphinx-autobuild`
+  for building this documentation.
 
 `dev`
 : everything above, plus `ruff` and `build`.

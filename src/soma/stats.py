@@ -76,6 +76,22 @@ class bin1D:
         self.bin_edges_max = self.bin_edges.max()
 
     def bin(self, ix, iy, stat=np.nanmean):
+        """Bin the samples ``iy`` taken at positions ``ix``.
+
+        Parameters
+        ----------
+        ix, iy : ndarray
+            Positions and values of the samples. Values outside the bin edges are ignored.
+        stat : callable, optional
+            Statistic evaluated in each bin, the NaN-ignoring mean by default.
+
+        Returns
+        -------
+        cents : ndarray
+            Bin centers.
+        binned : ndarray
+            The statistic in each bin.
+        """
         x = ix.copy()
         y = iy.copy()
         # this just prevents an annoying warning (which is otherwise informative) everytime
@@ -90,6 +106,22 @@ class bin1D:
 
 
 class bin2D:
+    """Average a 2D array in bins of a second array of the same shape, e.g. annuli.
+
+    The typical use is to bin a 2D power spectrum in annuli of constant ``|ell|``, with
+    ``modrmap`` the map of ``|ell|`` (``enmap.modlmap``) or of the distance from a center
+    (``enmap.modrmap``).
+
+    Parameters
+    ----------
+    modrmap : ndarray
+        The quantity that is binned in, with the shape of the arrays to be binned.
+    bin_edges : ndarray
+        Increasing bin edges. Bin ``i`` holds the pixels with
+        ``bin_edges[i] < modrmap <= bin_edges[i+1]``. Some pixels must lie above the last
+        edge, as is the case when the edges stop short of the largest value in ``modrmap``.
+    """
+
     def __init__(self, modrmap, bin_edges):
         self.centers = (bin_edges[1:] + bin_edges[:-1]) / 2.0
         self.cents = self.centers  # backwards compatibility
@@ -98,6 +130,31 @@ class bin2D:
         self.modrmap = modrmap
 
     def bin(self, data2d, weights=None, err=False, get_count=False, mask_nan=False):
+        """Average ``data2d`` in each bin.
+
+        Parameters
+        ----------
+        data2d : ndarray
+            Array to bin, with the shape of ``modrmap``.
+        weights : ndarray, optional
+            Weights with the shape of ``modrmap``, for a weighted mean. Not compatible with
+            ``err`` or ``mask_nan``.
+        err : bool, optional
+            Also return the standard error of the mean in each bin.
+        get_count : bool, optional
+            Also return the number of pixels (or the summed weights) in each bin.
+        mask_nan : bool, optional
+            Leave out NaN pixels of ``data2d`` (unweighted case only).
+
+        Returns
+        -------
+        centers : ndarray
+            Bin centers.
+        binned : ndarray
+            Mean of ``data2d`` in each bin.
+        errors or count : ndarray
+            Only if ``err`` or ``get_count`` is set; the two cannot be combined.
+        """
         if weights is None:
             if mask_nan:
                 keep = ~np.isnan(data2d.reshape(-1))

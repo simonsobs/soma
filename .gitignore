@@ -27,6 +27,8 @@ coverage.xml
 # Documentation
 docs/_build/
 docs/api/_autosummary/
+docs/examples/
+docs/jupyter_execute/
 
 # Editors / OS
 .vscode/

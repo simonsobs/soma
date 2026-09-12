@@ -8,6 +8,7 @@ A support library for Simons Observatory Maps and Analysis.
 
 installation
 footprints
+examples
 api
 contributing
 releasing

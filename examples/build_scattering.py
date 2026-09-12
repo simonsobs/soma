@@ -22,7 +22,7 @@ CELLS = [
         MD,
         r"""# Scattering covariances in the DES footprint
 
-`soma.scattering` computes directional scattering covariances 
+`soma.harmonic` has classes that compute directional scattering covariances 
 (similar to [s2scat](https://github.com/astro-informatics/s2scat)): the mean and variance of a field, the
 mean modulus (S1) and power (P00) of its wavelet transform, and the covariances C01 and C11.
 These contain non-Gaussian information that a power spectrum cannot see. The input can be
@@ -30,7 +30,7 @@ harmonic coefficients (`ScatterTransform`), a CAR map (`CARScatterTransform`) or
 map (`HealpixScatterTransform`). Each of them can take a second field for cross statistics:
 
 ```python
-from soma.scattering import ScatterTransform
+from soma.harmonic import ScatterTransform
 
 st = ScatterTransform(lmax, N=3, J_min=2)  # numpy backend, the default
 mean, var, S1, P00, C01, C11 = st(alm)
@@ -105,7 +105,7 @@ from matplotlib.colors import TwoSlopeNorm
 from matplotlib.path import Path
 from pixell import curvedsky, enmap
 
-from soma import maps, scattering
+from soma import maps, harmonic
 
 L = 2048  # band limit
 shape, wcs = enmap.fullsky_geometry(shape=(L, 2 * L), variant="fejer1")
@@ -173,7 +173,7 @@ JAX the first call also compiles the transform.""",
     (
         PY,
         r"""t0 = time.time()
-st = scattering.CARScatterTransform(shape, wcs, mask=interior, cut=True, backend=BACKEND)
+st = harmonic.CARScatterTransform(shape, wcs, mask=interior, cut=True, backend=BACKEND)
 print(f"setup: {time.time() - t0:.1f} s")
 
 for i in range(2):

@@ -1,24 +1,21 @@
 """Sphinx configuration for the soma documentation."""
 
 import re
+import shutil
 import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as get_version
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent.parent
+_DOCS = Path(__file__).resolve().parent
+_ROOT = _DOCS.parent
 
-# Allow building from a checkout in which soma has not been installed.
+# Document the source tree next to this file, even if another copy of soma is installed.
 sys.path.insert(0, str(_ROOT / "src"))
 
 
 def _release():
-    """Return the full version string of the documented package.
-
-    Uses the installed distribution metadata when available and falls back to
-    parsing pyproject.toml, so that the docs can also be built from a checkout
-    in which soma has not been installed.
-    """
+    """Return the version from the installed metadata, or from pyproject.toml."""
     try:
         return get_version("soma")
     except PackageNotFoundError:
@@ -26,6 +23,21 @@ def _release():
         match = re.search(r'^version = "(.+?)"', pyproject, re.MULTILINE)
         return match.group(1) if match else "0.0.0"
 
+
+def _copy_examples():
+    """Copy the pre-executed notebooks in examples/ into docs/examples/.
+
+    Sphinx only reads files below docs/, and the notebooks live next to the scripts that
+    build them. The copies are ignored by git.
+    """
+    dest = _DOCS / "examples"
+    shutil.rmtree(dest, ignore_errors=True)
+    dest.mkdir()
+    for nb in sorted((_ROOT / "examples").glob("*.ipynb")):
+        shutil.copy2(nb, dest / nb.name)
+
+
+_copy_examples()
 
 project = "soma"
 author = "Mathew Madhavacheril"
@@ -38,26 +50,21 @@ extensions = [
     "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",
     "sphinx.ext.intersphinx",
+    "sphinx.ext.mathjax",
     "sphinx.ext.viewcode",
-    "myst_parser",
-    "sphinx_rtd_theme",
+    "sphinx_copybutton",
+    "myst_nb",
 ]
 
-exclude_patterns = ["_build"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
-html_theme = "sphinx_rtd_theme"
+html_theme = "furo"
 html_title = f"soma {release}"
 
+# API reference: api.md lists the modules and autosummary writes one page for each.
 autosummary_generate = True
-autodoc_default_options = {
-    "members": True,
-    "undoc-members": True,
-    "show-inheritance": True,
-}
-# pixell and healpy are compiled and slow to install, and are not needed to
-# document soma's own API. numpy, scipy and yaml are left unmocked so that type
-# references in signatures keep resolving through intersphinx.
-autodoc_mock_imports = ["pixell", "healpy"]
+autodoc_default_options = {"members": True, "show-inheritance": True}
+autodoc_member_order = "bysource"
 
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
@@ -65,4 +72,8 @@ intersphinx_mapping = {
     "scipy": ("https://docs.scipy.org/doc/scipy/", None),
 }
 
-myst_enable_extensions = ["colon_fence", "deflist"]
+# The notebooks are committed with their outputs and rendered as they are: running them
+# needs data downloads and, for some, a GPU.
+nb_execution_mode = "off"
+myst_enable_extensions = ["colon_fence", "deflist", "dollarmath", "amsmath"]
+myst_heading_anchors = 3

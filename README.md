@@ -46,7 +46,9 @@ Documentation is built with Sphinx and hosted on
 [Read the Docs](https://soma.readthedocs.io):
 
 ```bash
-sphinx-build -b html docs docs/_build/html
+[uv] pip install -e ".[docs]"
+make -C docs html        # open docs/_build/html/index.html
+make -C docs livehtml    # live preview with automatic rebuilds
 ```
 
 
