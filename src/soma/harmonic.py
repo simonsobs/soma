@@ -8,11 +8,10 @@ Features include:
 
 import ducc0
 import numpy as np
-from pixell import curvedsky, enmap
-from pywiggle import _wiggle
+from pixell import curvedsky, enmap, reproject, utils, wcsutils
 from scipy.ndimage import map_coordinates
 import os
-from math import comb
+from math import comb, isqrt
 from . import maps, stats
 
 __all__ = [
@@ -491,7 +490,7 @@ def harm2profile(cl, betas_rad, m=0):
     transform into a beam profile. For m = 0 this reproduces
     pixell.utils.beam_transform_to_profile.
 
-    The Wigner-d matrix comes from pywiggle's compiled routine, which is
+    The Wigner-d matrix comes from pywiggle's routine, which is
     general in spin and carries the standard Condon-Shortley phase. An
     equivalent route is a ducc0 spin-m synthesis restricted to mmax = 0,
     whose theta dependence is the same d^l_{m0}; the two agree exactly up
@@ -511,9 +510,11 @@ def harm2profile(cl, betas_rad, m=0):
     prof : ndarray
         Profile evaluated at betas_rad.
     """
+    from pywiggle import core as pcore
+
     cl = np.asarray(cl, dtype=float)
     ells = np.arange(cl.size)
-    dmat = _wiggle._compute_wigner_d_matrix(
+    dmat = pcore.compute_wigner_d_matrix(
         cl.size - 1, abs(m), 0, np.cos(np.asarray(betas_rad, dtype=float))
     )
     return dmat @ ((2.0 * ells + 1.0) / (4.0 * np.pi) * cl)
@@ -560,10 +561,10 @@ Outline of the transform:
 
 Typical use::
 
-    from soma.scattering import ScatterTransform, CARScatterTransform, HealpixScatterTransform
+    from soma.harmonic import ScatterTransform, CARScatterTransform, HealpixScatterTransform
 
     st = ScatterTransform(lmax, N=3, J_min=2, mask=mask)      # input: healpy alm, any lmax
-    st = CARScatterTransform(shape, wcs, mask=mask)           # input: full-sky Fejer-1 enmap
+    st = CARScatterTransform(shape, wcs, mask=mask)           # input: enmap on (shape, wcs)
     st = HealpixScatterTransform(lmax, niter=3, mask=hpmask)  # input: HEALPix map, ring ordering
     mean, var, S1, P00, C01, C11 = st(x)
     mean, var, S1, P00, C01, C11 = st.from_alm(alm)           # alm directly, on any of the three
@@ -658,29 +659,63 @@ def _steering_matrix(N):
 # the transform
 
 
-def _healpix_to_mask(hmap, shape, wcs):
-    """Boolean mask on a CAR geometry from a HEALPix map (ring ordering) by nearest pixel."""
-    import healpy as hp
+def _as_mask(mask, shape, wcs):
+    """A mask as a 2d enmap. A HEALPix map (ring ordering) is rasterised onto (shape, wcs), an
+    array without a wcs must have the shape of that geometry, an enmap keeps its own geometry."""
+    if np.ndim(mask) == 1:
+        hmask = np.asarray(mask, dtype=np.float64)
+        return reproject.healpix2map(hmask, shape, wcs, method="spline", order=0, spin=[0]) > 0.5
+    if hasattr(mask, "wcs"):
+        mask = enmap.ndmap(np.asarray(mask), mask.wcs)
+    elif np.shape(mask) == tuple(shape[-2:]):
+        mask = enmap.ndmap(np.asarray(mask), wcs)
+    else:
+        raise ValueError(
+            f"a mask without a wcs must have the shape {tuple(shape[-2:])} of the geometry it "
+            f"is on, not {np.shape(mask)}; pass an enmap or a HEALPix map otherwise"
+        )
+    if mask.ndim != 2 or not wcsutils.is_cyl(mask.wcs):
+        raise ValueError("the mask must be a 2d map on a cylindrical geometry")
+    return mask
 
-    dec, ra = enmap.posmap(shape, wcs)
-    pix = hp.ang2pix(hp.npix2nside(len(hmap)), np.pi / 2 - dec, ra % (2 * np.pi))
-    return np.asarray(hmap)[pix] > 0.5
+
+def _resample_mask(mask, shape, wcs):
+    """Nearest pixel resampling of a 2d enmap mask onto the cylindrical geometry (shape, wcs).
+
+    Pixels outside the mask's own geometry are False. Both geometries are cylindrical, so
+    rows depend only on declination and columns only on RA, and RA wraps around the sky.
+    """
+    ny, nx = shape[-2:]
+    dec = enmap.pix2sky(shape, wcs, [np.arange(ny), np.zeros(ny)])[0]
+    ra = enmap.pix2sky(shape, wcs, [np.zeros(nx), np.arange(nx)])[1]
+    dec0, ra0 = enmap.pix2sky(mask.shape, mask.wcs, [0, 0])
+    y = np.floor(enmap.sky2pix(mask.shape, mask.wcs, [dec, np.full(ny, ra0)])[0] + 0.5)
+    x = np.floor(enmap.sky2pix(mask.shape, mask.wcs, [np.full(nx, dec0), ra])[1] + 0.5)
+    y, x = y.astype(int), x.astype(int) % utils.nint(360 / abs(mask.wcs.wcs.cdelt[0]))
+    oky, okx = (y >= 0) & (y < mask.shape[-2]), x < mask.shape[-1]
+    out = np.zeros((ny, nx), bool)
+    out[np.ix_(oky, okx)] = np.asarray(mask)[np.ix_(y[oky], x[okx])] > 0.5
+    return out
 
 
 def _jax_available(device_only=False):
-    """Whether JAX and a ducc build with the XLA handlers of its SHT backend are present.
+    """Whether JAX and a ducc build with the XLA handlers JAX needs where it runs are present.
 
-    With ``device_only`` this also requires JAX to run on an accelerator rather than on a
-    CPU, which is what the automatic choice of backend asks for.
+    JAX on an accelerator needs the handlers of ducc's CUDA backend (``sht_ffi_targets``); on
+    a CPU those of the CPU transforms (``sht_ffi_cpu_targets``) serve as well. With
+    ``device_only`` this also requires JAX to run on an accelerator, which is what the
+    automatic choice of backend asks for.
     """
     try:
         import ducc0
         import jax
     except ImportError:
         return False
-    if not (hasattr(ducc0.sht, "sht_ffi_targets") or hasattr(ducc0.sht, "sht_ffi_cpu_targets")):
+    on_device = jax.default_backend() != "cpu"
+    if device_only and not on_device:
         return False
-    return jax.default_backend() != "cpu" if device_only else True
+    names = ["sht_ffi_targets"] + ([] if on_device else ["sht_ffi_cpu_targets"])
+    return any(hasattr(ducc0.sht, name) for name in names)
 
 
 def _default_backend():
@@ -722,12 +757,15 @@ class ScatterTransform:
         lmax: band limit of the input; L = lmax + 1 rows in the finest CAR geometry.
         N: azimuthal band limit; 2N-1 wavelet orientations (N must be odd).
         J_min: lowest wavelet scale; the highest is log2 L.
-        mask: optional boolean mask, either an enmap on the full-sky Fejer-1 geometry with L rows,
-            ``enmap.fullsky_geometry(shape=(L, 2 * L), variant="fejer1")``, or a HEALPix map.
-            Pixel statistics are restricted to it and, with ``cut``, every scale is restricted to
-            the rows covering it.
+        mask: optional boolean mask: an enmap on any cylindrical geometry (zero outside it), an
+            array on the full-sky Fejer-1 geometry with L rows,
+            ``enmap.fullsky_geometry(shape=(L, 2 * L), variant="fejer1")``, or a HEALPix map
+            (ring ordering). It is resampled to every scale by nearest pixel. Pixel statistics
+            are restricted to it and, with ``cut``, every scale is restricted to the rows
+            covering it.
         cut: restrict the per-scale geometries to the rows covering the mask, so that every
             synthesis costs proportionally less (rows are kept whole; pixell pads nothing).
+            Needs a mask.
         lmax_trunc: analyse ``|W_j2|`` only up to the band limit needed by the coarser scales.
             The analysis is the quadrature weighted adjoint on the geometry of the scale, the
             same on both backends. It is not exact for a map that is not band limited, as the
@@ -752,12 +790,12 @@ class ScatterTransform:
     ):
         L = lmax + 1
         shape, wcs = enmap.fullsky_geometry(shape=(L, 2 * L), variant="fejer1")
-        if mask is not None and np.ndim(mask) == 1:  # HEALPix mask: rasterise onto the CAR geometry
-            mask = enmap.ndmap(_healpix_to_mask(mask, shape, wcs), wcs)
-        elif mask is not None and tuple(mask.shape[-2:]) != tuple(shape):
-            raise ValueError(
-                "mask must be an enmap on the full-sky Fejer-1 geometry or a HEALPix map"
-            )
+        if mask is not None:
+            mask = _as_mask(mask, shape, wcs)
+            if not np.any(mask):
+                raise ValueError("the mask is empty")
+        elif cut:
+            raise ValueError("cut restricts the geometries to the rows of a mask, so it needs one")
         self.shape, self.wcs = shape, wcs
         self.backend = backend or _default_backend()
         if self.backend == "jax" and not _jax_available():
@@ -776,9 +814,9 @@ class ScatterTransform:
         self.Lj = {j: min(int(np.ceil(2.0 ** (j + 1))), L) for j in range(J_min, J + 1)}
         Ls = sorted(set(self.Lj.values()))
         box = None
-        if mask is not None and cut:
+        if cut:  # declinations of the outer edges of the mask rows
             rows = np.where(np.asarray(mask).any(axis=1))[0]
-            box = enmap.pixbox2skybox(mask.shape, mask.wcs, [[rows[0], 0], [rows[-1] + 1, 0]])[:, 0]
+            box = enmap.pix2sky(mask.shape, mask.wcs, [[rows[0] - 0.5, rows[-1] + 0.5], [0, 0]])[0]
         self.geoms = {}
         for Lj in Ls:
             s, w = enmap.fullsky_geometry(shape=(Lj, 2 * Lj), variant="fejer1")
@@ -810,12 +848,13 @@ class ScatterTransform:
         for Lj in Ls:
             s, ww = self.geoms[Lj]
             wt = curvedsky.quad_weights(s, ww)[:, None] * np.ones(s)
-            self.mask[Lj] = (
-                None
-                if mask is None
-                else enmap.project(mask.astype(np.float64), s, ww, order=0) > 0.5
-            )
+            self.mask[Lj] = None if mask is None else _resample_mask(mask, s, ww)
             if mask is not None:
+                if not self.mask[Lj].any():
+                    raise ValueError(
+                        f"the mask contains no pixel centre of the band limit {Lj} geometry; "
+                        "enlarge the mask or raise J_min"
+                    )
                 wt *= self.mask[Lj]
             w[Lj], self.norm[Lj] = wt, float(wt.sum())
         # backend specifics: array namespace, constant arrays, transforms and buffers
@@ -975,16 +1014,26 @@ class ScatterTransform:
         )
 
     def _prepare(self, alm):
-        # JAX arrays and tracers (the arrays with an .at updater) pass through untouched, so
-        # that jit, grad and vmap see them; anything else becomes numpy at lmax = L-1
-        if not hasattr(alm, "at"):
-            alm = np.asarray(alm, dtype=np.complex128)
-            if alm.size != self.ainfo.nelem:
-                alm = curvedsky.transfer_alm(curvedsky.alm_info(nalm=alm.size), alm, self.ainfo)
-        return self.xp.asarray(alm, dtype=self.xp.complex128)
+        # an array of the backend at lmax = L-1; on JAX the transfer is a gather, so that jit,
+        # grad and vmap trace through it, and the numpy backend takes JAX arrays to the host
+        if self.backend == "numpy":
+            alm = np.asarray(alm)
+        alm = self.xp.asarray(alm, dtype=self.xp.complex128)
+        n = alm.shape[-1]
+        lmax_in = (isqrt(8 * n + 1) - 3) // 2
+        if (lmax_in + 1) * (lmax_in + 2) // 2 != n:
+            raise ValueError(f"{n} coefficients is not the healpy layout of any lmax")
+        if lmax_in != self.L - 1 and (lmax_in, self.L) not in self.tidx:
+            self.tidx[lmax_in, self.L] = tuple(
+                map(self.xp.asarray, _transfer_index(lmax_in, self.L - 1))
+            )
+        return self._transfer(alm, lmax_in, self.L)
 
     def __call__(self, alm, alm2=None, timer=None):
         """Return (mean, var, S1, P00, C01, C11) for alm in healpy ordering (any lmax).
+
+        The alm are truncated or zero padded to lmax = L-1, on either backend; JAX arrays stay
+        differentiable through this.
 
         With a second field ``alm2`` the cross statistics are returned (see ``from_alm``).
         ``timer`` is an optional object with a ``tick(msg)`` method, called as each stage
@@ -1014,25 +1063,52 @@ class ScatterTransform:
 
 
 class CARScatterTransform(ScatterTransform):
-    """Scattering covariances of enmaps on the full-sky CAR Fejer-1 geometry (shape, wcs).
+    """Scattering covariances of enmaps on a cylindrical geometry (shape, wcs).
 
-    Same arguments as ``ScatterTransform`` after ``shape, wcs`` (which fix L = shape[-2]).
+    The geometry may be full-sky or a patch at any resolution. Maps are analysed on it with
+    ``curvedsky.map2alm``, which treats the sky outside the geometry as zero, and the pixel
+    statistics are restricted to the area the geometry covers (and to ``mask``). For a patch,
+    ``cut=True`` also restricts every wavelet scale to the rows covering it, which makes the
+    transforms cheaper.
+
+    Args:
+        shape, wcs: geometry of the input maps.
+        lmax: band limit of the analysis. Default: round(180 deg / pixel height) - 1, which is
+            L - 1 for ``enmap.fullsky_geometry(shape=(L, 2 * L))``.
+        mask: optional mask. An enmap on any cylindrical geometry, an array of shape
+            ``shape[-2:]`` on (shape, wcs), or a HEALPix map (ring ordering); it is combined
+            with the footprint of (shape, wcs).
+        niter: Jacobi iterations of ``curvedsky.map2alm``. 0 is exact on full-sky geometries
+            with quadrature weights, such as Fejer-1 and Clenshaw-Curtis; more iterations
+            improve the analysis on other full-sky geometries.
+        Other arguments as for ``ScatterTransform``.
     """
 
-    def __init__(self, shape, wcs, **kwargs):
-        if shape[-1] != 2 * shape[-2]:
-            raise ValueError(
-                'shape, wcs must be enmap.fullsky_geometry(shape=(L, 2 * L), variant="fejer1")'
-            )
-        super().__init__(shape[-2] - 1, **kwargs)
+    def __init__(self, shape, wcs, lmax=None, mask=None, niter=0, **kwargs):
+        self.map_shape, self.map_wcs, self.niter = tuple(shape[-2:]), wcs.deepcopy(), niter
+        self.map_wcs.wcs.set()  # astropy compares a copied, unset wcs as unequal to anything
+        if lmax is None:
+            lmax = utils.nint(180 / abs(wcs.wcs.cdelt[1])) - 1
+        footprint = np.ones(self.map_shape, bool)
+        if mask is not None:
+            footprint = _resample_mask(_as_mask(mask, self.map_shape, wcs), self.map_shape, wcs)
+        super().__init__(lmax, mask=enmap.ndmap(footprint, wcs), **kwargs)
+
+    def _to_alm(self, m):
+        if not hasattr(m, "wcs"):
+            m = (enmap.ndmap if isinstance(m, np.ndarray) else enmap.devmap)(m, self.map_wcs)
+        if tuple(m.shape[-2:]) != self.map_shape or not wcsutils.equal(
+            m.wcs, self.map_wcs, tol=1e-10
+        ):
+            raise ValueError("the map is not on the geometry this transform was built for")
+        return curvedsky.map2alm(m, ainfo=self.ainfo, niter=self.niter, nthread=self.nthread)
 
     def __call__(self, imap, imap2=None, timer=None):
-        """Return the statistics of a real enmap on this geometry (cross statistics with imap2)."""
-        alms = [
-            curvedsky.map2alm(m, ainfo=self.ainfo, nthread=self.nthread)
-            for m in [imap, imap2]
-            if m is not None
-        ]
+        """Return the statistics of a real map on this geometry (cross statistics with imap2).
+
+        The maps are enmaps (or devmaps) on (shape, wcs), or arrays of that shape.
+        """
+        alms = [self._to_alm(m) for m in [imap, imap2] if m is not None]
         _tick(timer, "map2alm")
         return self.from_alm(*alms, timer=timer)
 
