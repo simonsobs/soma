@@ -81,6 +81,42 @@ def test_ring_moments_match_the_estimator(alm, m):
     assert np.abs(mine - direct).max() / np.abs(direct).max() < 1e-8
 
 
+@pytest.mark.parametrize("m", [1, 2, 3, 4])
+def test_complex_cl_resums_in_one_call(alm, m):
+    """harm2profile(cl) must equal resumming the real and imaginary halves apart.
+
+    The docstring of multipole_cross_spectrum promises exactly this. It used
+    to be false: harm2profile cast cl to a real dtype, so a complex spectrum
+    lost its sin(m phi) half to a ComplexWarning and nothing else.
+    """
+    ras, decs = np.array([np.rad2deg(PH0)]), np.array([90.0 - np.rad2deg(TH0)])
+    cl = harmonic.multipole_cross_spectrum(alm, *harmonic.catalog_spin_alm(ras, decs, LMAX, m))
+    split = harmonic.harm2profile(cl.real, BETAS, m=m) + 1j * harmonic.harm2profile(
+        cl.imag, BETAS, m=m
+    )
+    one = harmonic.harm2profile(cl, BETAS, m=m)
+    assert np.iscomplexobj(one)
+    assert np.abs(one - split).max() / np.abs(split).max() < 1e-14
+    # guard against the test passing because the imaginary half is negligible
+    assert np.abs(split.imag).max() > 0.1 * np.abs(split.real).max()
+
+
+def test_real_cl_stays_real():
+    """The complex path must not have made real input return complex."""
+    prof = harmonic.harm2profile(beams.gaussian_bl(np.arange(501), 5.0), BETAS, m=0)
+    assert not np.iscomplexobj(prof)
+
+
+@pytest.mark.parametrize("m", [-1, -2])
+def test_negative_m_is_rejected(m):
+    """Negative m used to return the +|m| answer -- right modulus, conjugated."""
+    ras, decs = np.array([137.0]), np.array([20.0])
+    with pytest.raises(ValueError, match="must be >= 0"):
+        harmonic.catalog_spin_alm(ras, decs, LMAX, m)
+    with pytest.raises(ValueError, match="must be >= 0"):
+        harmonic.harm2profile(np.ones(LMAX + 1), BETAS, m=m)
+
+
 def test_m0_reproduces_the_legendre_profile():
     """harm2profile at m=0 is pixell's beam_transform_to_profile."""
     bl = beams.gaussian_bl(np.arange(2001), 5.0, curved=True)

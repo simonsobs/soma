@@ -373,7 +373,7 @@ def catalog_spin_alm(
     lmax : int
         Maximum multipole.
     m : int
-        Azimuthal multipole (the spin of the transform).
+        Azimuthal multipole (the spin of the transform); must be >= 0.
     weights : ndarray or None
         Per-source weights; uniform if None.
     alphas_deg : ndarray or None
@@ -393,6 +393,14 @@ def catalog_spin_alm(
         Complex alm arrays in healpy packing. alm_B is identically zero
         for m = 0.
     """
+    if m < 0:
+        raise ValueError(
+            f"m must be >= 0, got {m}. ducc's transform takes a spin >= 0, and "
+            "for a real map the negative-m coefficients add nothing: the "
+            "cross-spectrum obeys C^(-m) = conj(C^(m)). Pass abs(m) and "
+            "conjugate. Silently returning the +|m| answer here would have "
+            "flipped the sign of every sin(m phi) channel."
+        )
     ras = np.asarray(ras_deg, dtype=float)
     decs = np.asarray(decs_deg, dtype=float)
     w = np.ones(ras.size) if weights is None else np.asarray(weights, dtype=float)
@@ -427,6 +435,13 @@ def multipole_cross_spectrum(alm_map, alm_E, alm_B):
     alm2cl normalization (i.e. divided by 2l+1). Feeding this to
     harm2profile with the same m gives the real-space azimuthal moment of
     the stack, up to a factor 4 pi.
+
+    The result is complex for m > 0 and both halves are signal: the real
+    part is the cos(m phi) channel and the imaginary part -- the alm_B
+    term -- the sin(m phi) one, which is the parity channel
+    `beam_multipole` describes. Casting this to a real dtype before
+    resumming it throws away half the moment, and for the m = 2 of a
+    typical map the two halves are comparable in size.
 
     Parameters
     ----------
@@ -500,21 +515,31 @@ def harm2profile(cl, betas_rad, m=0):
     Parameters
     ----------
     cl : ndarray
-        Spectrum starting at ell=0.
+        Spectrum starting at ell=0. May be complex, and for m > 0 usually
+        is: the resummation is linear, so a complex C^(m) resums to the
+        complex S_m whose imaginary part is the sin(m phi) channel.
     betas_rad : ndarray
         Radii in radians at which to evaluate the profile.
     m : int
-        Azimuthal multipole.
+        Azimuthal multipole; must be >= 0. Negative m carries no new
+        information for a real map, since S_-m = conj(S_m).
 
     Returns
     -------
     prof : ndarray
-        Profile evaluated at betas_rad.
+        Profile evaluated at betas_rad, complex if `cl` was.
     """
-    cl = np.asarray(cl, dtype=float)
+    if m < 0:
+        raise ValueError(
+            f"m must be >= 0, got {m}. For a real map S_-m = conj(S_m), so pass "
+            "abs(m) and conjugate the result."
+        )
+    # Not dtype=float: a complex cl is the normal case (multipole_cross_spectrum
+    # returns one) and casting it would silently discard the sin(m phi) half.
+    cl = np.asarray(cl)
     ells = np.arange(cl.size)
     dmat = _wiggle._compute_wigner_d_matrix(
-        cl.size - 1, abs(m), 0, np.cos(np.asarray(betas_rad, dtype=float))
+        cl.size - 1, m, 0, np.cos(np.asarray(betas_rad, dtype=float))
     )
     return dmat @ ((2.0 * ells + 1.0) / (4.0 * np.pi) * cl)
 
