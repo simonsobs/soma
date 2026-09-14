@@ -1,12 +1,12 @@
-import soma
+import somapy
 
 
 def test_version_is_exposed():
-    assert isinstance(soma.__version__, str)
-    assert soma.__version__
+    assert isinstance(somapy.__version__, str)
+    assert somapy.__version__
 
 
 def test_maps_module_imports():
-    from soma import maps
+    from somapy import maps
 
     assert maps is not None

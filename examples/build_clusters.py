@@ -24,7 +24,7 @@ A minimal end-to-end tour of functionality for simulating a sky of Sunyaev-Zel'd
 clusters and point sources (catalog mode: beam-convolved Arnaud pressure templates from
 each cluster's mass and redshift) and later *fitting and subtracting* them from
 an observed map (fit mode: per-object GLS amplitudes against the pixel
-covariance, built by `soma.maps.fit_object_amplitudes`), returning the
+covariance, built by `somapy.maps.fit_object_amplitudes`), returning the
 painted model map and mean stacks before and after in the same call. We also
 demonstrate how you can inpaint these objects if you don't think they can
 be fit well.""",
@@ -35,7 +35,7 @@ be fit well.""",
 import numpy as np
 from pixell import curvedsky, enmap, utils
 
-from soma import maps
+from somapy import maps
 
 # fixed categorical order, validated for colour-vision deficiency
 C = ["#2a78d6", "#1baf7a", "#eda100", "#008300"]
@@ -104,7 +104,7 @@ plt.grid(False)""",
         MD,
         """## 2. Stack before
 
-`soma.maps.stack_thumbnails` averages tangent-plane cutouts at the catalog
+`somapy.maps.stack_thumbnails` averages tangent-plane cutouts at the catalog
 positions; the CMB and noise average down while the mean cluster decrement
 does not.""",
     ),
@@ -123,8 +123,8 @@ print(f"cluster stack centre before subtraction: {stack_before[c0, c0]:+.1f} uK"
 The same `build_object_model` call in **fit mode**: each cluster's amplitude
 (and angular scale, over a small grid) and each source's amplitude is
 solved by GLS against the pixel covariance C = S$_{\\rm cmb}$ + N, which
-`soma.maps.fit_object_amplitudes` builds from the supplied CMB spectrum
-with `soma.theory.xi_from_cl`'s correlation functions — non-periodic and
+`somapy.maps.fit_object_amplitudes` builds from the supplied CMB spectrum
+with `somapy.theory.xi_from_cl`'s correlation functions — non-periodic and
 containing the full large-scale variance, so no ad-hoc low-$\\ell$ cuts
 or mean deprojection are needed.  The call returns the painted best-fit
 model map and the before/after stacks in one go; subtracting the model
@@ -180,7 +180,7 @@ print(f"central decrement removed: clusters {100 * red_c:.1f}%, sources {100 * r
         """## Inpainting instead of modelling
 
 When no source model is trusted, the positions can instead be *inpainted*
-with `soma.maps.Inpainter`: each hole is replaced by the Gaussian-field value
+with `somapy.maps.Inpainter`: each hole is replaced by the Gaussian-field value
 conditioned on its surroundings.  Note the residual ring in the stack —
 the cluster profile's wings extend beyond the hole radius, which is
 exactly why fitting an extended model (above) beats hole-filling for

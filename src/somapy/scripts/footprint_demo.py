@@ -1,6 +1,6 @@
 """Demo: build a few hit maps in memory and spin them on a globe.
 
-    python -m soma.scripts.footprint_demo [output.gif]
+    python -m somapy.scripts.footprint_demo [output.gif]
 
 No data files needed; the maps are generated here.
 """
@@ -10,7 +10,7 @@ import sys
 import numpy as np
 from pixell import enmap, utils
 
-from soma.io import plot_footprints
+from somapy.io import plot_footprints
 
 
 def hits(dec_range, ra_range, res=10.0, taper=4.0, holes=0, seed=0):

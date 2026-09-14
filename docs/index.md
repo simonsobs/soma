@@ -17,13 +17,13 @@ releasing
 ## Quick start
 
 ```bash
-pip install soma
+pip install somapy
 ```
 
 ```python
-import soma
+import somapy
 
-print(soma.__version__)
+print(somapy.__version__)
 ```
 
 ## Indices

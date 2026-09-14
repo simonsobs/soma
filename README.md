@@ -1,9 +1,9 @@
 soma
 ====
 
-[![CI](https://github.com/msyriac/soma/actions/workflows/ci.yml/badge.svg)](https://github.com/msyriac/soma/actions/workflows/ci.yml)
-[![Documentation Status](https://readthedocs.org/projects/pysoma/badge/?version=latest)](https://pysoma.readthedocs.io/en/latest/)
-[![PyPI](https://img.shields.io/pypi/v/pysoma.svg)](https://pypi.org/project/pysoma/)
+[![CI](https://github.com/simonsobs/soma/actions/workflows/ci.yml/badge.svg)](https://github.com/simonsobs/soma/actions/workflows/ci.yml)
+[![Documentation Status](https://readthedocs.org/projects/somapy/badge/?version=latest)](https://somapy.readthedocs.io/en/latest/)
+[![PyPI](https://img.shields.io/pypi/v/somapy.svg)](https://pypi.org/project/somapy/)
 
 [`soma`](https://en.wikipedia.org/wiki/Soma_(Brave_New_World)) (Simons Observatory Map-based Analysis) is a set of companion tools for use with the [`pixell`](https://github.com/simonsobs/pixell) library.
 
@@ -15,7 +15,7 @@ Installation
 To install from a local checkout, including the development dependencies:
 
 ```bash
-git clone https://github.com/msyriac/soma.git
+git clone https://github.com/simonsobs/soma.git
 cd soma
 [uv] pip install -e ".[dev]"
 ```
@@ -26,9 +26,9 @@ Usage
 -----
 
 ```python
-import soma
+import somapy
 
-print(soma.__version__)
+print(somapy.__version__)
 ```
 
 Runnable, pre-executed notebooks live in [`examples/`](examples/README.md); each is
@@ -45,7 +45,7 @@ ruff format .       # format
 ```
 
 Documentation is built with Sphinx and hosted on
-[Read the Docs](https://soma.readthedocs.io):
+[Read the Docs](https://somapy.readthedocs.io):
 
 ```bash
 [uv] pip install -e ".[docs]"
@@ -57,8 +57,8 @@ make -C docs livehtml    # live preview with automatic rebuilds
 Attribution
 -----------
 
-`soma` bundles one external data product: `src/soma/planck_dust_equ.fits`, the
-sky backdrop that `soma.io.plot_footprints` paints its globes with. It is a
+`soma` bundles one external data product: `src/somapy/planck_dust_equ.fits`, the
+sky backdrop that `somapy.io.plot_footprints` paints its globes with. It is a
 *derived* version of the Planck Commander thermal-dust map, rotated from
 Galactic to equatorial coordinates, band-limited and resampled onto a 0.5° CAR
 grid (see [the footprints docs](docs/footprints.md)).

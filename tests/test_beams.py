@@ -1,10 +1,10 @@
-"""pytest suite for soma.beams: measured beam transforms vs analytic truth."""
+"""pytest suite for somapy.beams: measured beam transforms vs analytic truth."""
 
 import numpy as np
 import pytest
 from pixell import enmap, utils
 
-from soma import beams, harmonic, maps
+from somapy import beams, harmonic, maps
 
 PIX = 0.25  # arcmin
 N = 512

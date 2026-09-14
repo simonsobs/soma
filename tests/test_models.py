@@ -1,5 +1,5 @@
 """
-Tests for the model-map machinery in soma.maps:
+Tests for the model-map machinery in somapy.maps:
 catalog-mode painting against the analytic prediction, end-to-end
 amplitude recovery and stack cleaning on injected clusters and sources,
 the candidate-grid GLS fitter, and the painting/stacking helpers.
@@ -8,7 +8,7 @@ the candidate-grid GLS fitter, and the painting/stacking helpers.
 import numpy as np
 from pixell import curvedsky, enmap, utils
 
-from soma import maps
+from somapy import maps
 
 ARCMIN = utils.arcmin
 

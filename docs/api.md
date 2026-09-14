@@ -4,11 +4,11 @@
 .. autosummary::
    :toctree: api/_autosummary
 
-   soma.beams
-   soma.catalogs
-   soma.harmonic
-   soma.io
-   soma.maps
-   soma.stats
-   soma.theory
+   somapy.beams
+   somapy.catalogs
+   somapy.harmonic
+   somapy.io
+   somapy.maps
+   somapy.stats
+   somapy.theory
 ```

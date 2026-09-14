@@ -1,6 +1,6 @@
 """
-Tests for the inpainting machinery in soma.maps (and the
-correlation functions in soma.theory): tables against closed forms,
+Tests for the inpainting machinery in somapy.maps (and the
+correlation functions in somapy.theory): tables against closed forms,
 the IQU pixel covariance against Monte-Carlo curvedsky realizations, the
 statistical calibration of the conditional fill on band-limited (noise
 free) simulations, and the robustness behaviours (RA seam, declination
@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 from pixell import curvedsky, enmap, utils
 
-from soma import maps as inpaint
+from somapy import maps as inpaint
 
 ARCMIN = utils.arcmin
 

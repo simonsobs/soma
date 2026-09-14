@@ -1,10 +1,10 @@
-"""pytest suite for the object-painting and mask helpers in soma.maps."""
+"""pytest suite for the object-painting and mask helpers in somapy.maps."""
 
 import numpy as np
 import pytest
 from pixell import coordinates, enmap, utils
 
-from soma import beams, harmonic, maps
+from somapy import beams, harmonic, maps
 
 RES = 0.5
 

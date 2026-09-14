@@ -1,10 +1,10 @@
-"""pytest suite for soma.harmonic: azimuthal modes of a generic image."""
+"""pytest suite for somapy.harmonic: azimuthal modes of a generic image."""
 
 import numpy as np
 import pytest
 from pixell import enmap, utils
 
-from soma import harmonic, maps
+from somapy import harmonic, maps
 
 N, RES = 256, 0.5
 
@@ -194,7 +194,7 @@ def smooth_multipole_image(n=N, pix=0.25):
     """A Gaussian carrying m=2 and m=4, each weighted by r^m so it is
     smooth at the origin -- see `test_a_cusp_puts_power_where_rings_cannot_see`
     for what happens when it is not."""
-    from soma import beams
+    from somapy import beams
 
     return beams.simulate_beam((n, n), pix, 2.0, moments={2: 0.2, 4: 0.1})
 
@@ -230,7 +230,7 @@ def test_round_trip_is_the_identity_on_the_modes():
 
 
 def test_multi_component_round_trip():
-    from soma import beams
+    from somapy import beams
 
     img = beams.simulate_pol_beam((N, N), 0.25, 2.0, eps=0.05)
     res, ell, c = decompose(img)

@@ -11,7 +11,7 @@ import pytest
 from pixell import utils
 from scipy import special
 
-from soma import beams, catalogs, harmonic, maps
+from somapy import beams, catalogs, harmonic, maps
 
 NSIDE, FWHM, NSRC = 512, 15.0, 200
 RES = 0.5 * hp.nside2resol(NSIDE)

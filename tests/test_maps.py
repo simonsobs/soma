@@ -1,10 +1,10 @@
-"""pytest suite for soma.maps."""
+"""pytest suite for somapy.maps."""
 
 import numpy as np
 import pytest
 from pixell import enmap, utils
 
-from soma import maps
+from somapy import maps
 
 
 def geom(n=64, res=0.5):

@@ -1,6 +1,6 @@
 """Reading survey maps and showing what they cover.
 
-    from soma.io import plot_footprints
+    from somapy.io import plot_footprints
     plot_footprints({"ACT DR6": "act_ivar.fits", "SO SAT": "so_ivar.fits"})
 
 Draws the sky footprint of a set of pixell ivar maps on a rotating globe.

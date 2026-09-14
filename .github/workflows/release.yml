@@ -33,7 +33,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     environment:
       name: pypi
-      url: https://pypi.org/p/soma
+      url: https://pypi.org/p/somapy
     permissions:
       # Required for PyPI trusted publishing (OIDC); no API token needed.
       id-token: write

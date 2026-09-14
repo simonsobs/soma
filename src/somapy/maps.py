@@ -658,7 +658,7 @@ def fit_object_amplitudes(
 
     For each catalog object a stamp is cut and the amplitude of its radial
     template is solved by GLS against the pixel covariance C = S_cmb + N,
-    built with :func:`soma.theory.xi_from_cl`'s correlation functions
+    built with :func:`somapy.theory.xi_from_cl`'s correlation functions
     (non-periodic, CAR-correct, full large-scale variance -- so no
     explicit low-ell cut or mean deprojection is needed; the covariance
     itself downweights the modes a stamp cannot constrain).  Covariance
@@ -1044,7 +1044,7 @@ def build_object_model(
         ``ras, decs`` (deg) and, for catalog mode, ``amps`` (peak uK).
     beam : float, ndarray or callable
         Gaussian FWHM in arcmin, a bl array (e.g. from
-        ``soma.beams.read_beam``), or a callable B(ell).
+        ``somapy.beams.read_beam``), or a callable B(ell).
     freq_ghz : float
         Frequency for the tSZ spectral function.
     comm : MPI communicator or None
@@ -1056,7 +1056,7 @@ def build_object_model(
         Map to fit on (required for ``fit``); also the stack default.
     cl : ndarray or None
         1D CMB TT spectrum of the map (before the beam), required for
-        ``fit`` -- passed to :func:`soma.maps.fit_object_amplitudes`.
+        ``fit`` -- passed to :func:`somapy.maps.fit_object_amplitudes`.
     noise : float, enmap or str
         White-noise level in uK-arcmin, or an ivar map/path (fit mode; an
         ivar map disables covariance caching).
@@ -1093,7 +1093,7 @@ def build_object_model(
 
     def log(msg):
         if verbose and rank == 0:
-            print(f"soma.szmodel: {msg}", flush=True)
+            print(f"somapy.szmodel: {msg}", flush=True)
 
     beam_fn = _beam_fn(beam)
     rmax = PROFILE_MAX_ARCMIN * utils.arcmin
@@ -1563,7 +1563,7 @@ class Inpainter:
         Hole radius in arcminutes.
     bl : ndarray or None
         Beam transfer applied to ``cl`` (all spectra multiplied by
-        ``bl**2``), e.g. from ``soma.beams.read_beam``.
+        ``bl**2``), e.g. from ``somapy.beams.read_beam``.
     noise_uK_arcmin : float or None
         Uniform white-noise level added to the covariance diagonal.
     ivar : enmap or None
@@ -1781,7 +1781,7 @@ class Inpainter:
             except (LinAlgError, ValueError) as e:
                 info["n_skipped"] += 1
                 if verbose:
-                    print(f"soma.maps: skipping object {i}: {e}")
+                    print(f"somapy.maps: skipping object {i}: {e}")
                 continue
             sarr = np.asarray(stamp, dtype=np.float64)
             if not np.isfinite(sarr).all():
@@ -1793,7 +1793,7 @@ class Inpainter:
         info["n_geometries"] = len(self._cache)
         if verbose:
             print(
-                f"soma.maps: filled {info['n_filled']} (slow {info['n_slow']}, "
+                f"somapy.maps: filled {info['n_filled']} (slow {info['n_slow']}, "
                 f"skipped {info['n_skipped']}, geometries {info['n_geometries']})"
             )
         return omap, info
