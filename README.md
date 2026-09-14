@@ -12,6 +12,12 @@ _This library is in active early development and its API will likely change sign
 Installation
 ------------
 
+To install a tagged wheel from `PyPI`:
+
+```bash
+[uv] pip install somapy
+```
+
 To install from a local checkout, including the development dependencies:
 
 ```bash
