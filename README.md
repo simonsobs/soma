@@ -7,6 +7,8 @@ soma
 
 [`soma`](https://en.wikipedia.org/wiki/Soma_(Brave_New_World)) (Simons Observatory Map-based Analysis) is a set of companion tools for use with the [`pixell`](https://github.com/simonsobs/pixell) library.
 
+_This library is in active early development and its API will likely change significantly. It is meant to replace `msyriac/orphics` and integrate in modules from other libraries that supplement `pixell`._
+
 Installation
 ------------
 
