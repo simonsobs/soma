@@ -84,3 +84,7 @@ The exact product is `COM_CompMap_dust-commander_0256_R2.00.fits`, column 0
 (`I_ML` — dust intensity at 545 GHz in µK_RJ, HEALPix Nside 256, 60′ FWHM,
 `PROCVER = DX11D`), from the [Planck Legacy Archive](http://pla.esac.esa.int),
 also mirrored [at IRSA](https://irsa.ipac.caltech.edu/data/Planck/release_2/all-sky-maps/maps/component-maps/foregrounds/).
+
+While much of `soma` consists of functions and modules directly inherited form `msyriac/orphics` and
+other libraries, LLMs may sometimes be used to generate code, docstrings and example notebooks, but
+must always be checked and vouched for by a human before committing or submitted for a PR.
