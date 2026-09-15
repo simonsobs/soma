@@ -5,7 +5,7 @@
 ## From PyPI
 
 ```bash
-pip install soma
+pip install somapy
 ```
 
 This pulls in the runtime dependencies: `numpy`, `scipy`, `pyyaml`,

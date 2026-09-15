@@ -1,15 +1,15 @@
-"""Command line front end for :func:`soma.io.plot_footprints`.
+"""Command line front end for :func:`somapy.io.plot_footprints`.
 
     soma-footprints act_ivar.fits so_ivar.fits -o footprints.gif
 
 Installed as the ``soma-footprints`` console script, so it is on PATH after
-``pip install soma``.
+``pip install somapy``.
 """
 
 import argparse
 
-from soma import __version__
-from soma.io import plot_footprints
+from somapy import __version__
+from somapy.io import plot_footprints
 
 
 def build_parser():
@@ -109,5 +109,5 @@ def main(argv=None):
     return 0
 
 
-if __name__ == "__main__":  # python -m soma.scripts.footprints
+if __name__ == "__main__":  # python -m somapy.scripts.footprints
     raise SystemExit(main())

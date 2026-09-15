@@ -1,9 +1,9 @@
-"""pytest suite for soma.stats: bandpower binning and Knox errors."""
+"""pytest suite for somapy.stats: bandpower binning and Knox errors."""
 
 import numpy as np
 import pytest
 
-from soma import stats
+from somapy import stats
 
 
 def test_bin_spectrum_is_the_mean_over_each_bin():

@@ -658,7 +658,7 @@ def fit_object_amplitudes(
 
     For each catalog object a stamp is cut and the amplitude of its radial
     template is solved by GLS against the pixel covariance C = S_cmb + N,
-    built with :func:`soma.theory.xi_from_cl`'s correlation functions
+    built with :func:`somapy.theory.xi_from_cl`'s correlation functions
     (non-periodic, CAR-correct, full large-scale variance -- so no
     explicit low-ell cut or mean deprojection is needed; the covariance
     itself downweights the modes a stamp cannot constrain).  Covariance
@@ -1044,7 +1044,7 @@ def build_object_model(
         ``ras, decs`` (deg) and, for catalog mode, ``amps`` (peak uK).
     beam : float, ndarray or callable
         Gaussian FWHM in arcmin, a bl array (e.g. from
-        ``soma.beams.read_beam``), or a callable B(ell).
+        ``somapy.beams.read_beam``), or a callable B(ell).
     freq_ghz : float
         Frequency for the tSZ spectral function.
     comm : MPI communicator or None
@@ -1056,7 +1056,7 @@ def build_object_model(
         Map to fit on (required for ``fit``); also the stack default.
     cl : ndarray or None
         1D CMB TT spectrum of the map (before the beam), required for
-        ``fit`` -- passed to :func:`soma.maps.fit_object_amplitudes`.
+        ``fit`` -- passed to :func:`somapy.maps.fit_object_amplitudes`.
     noise : float, enmap or str
         White-noise level in uK-arcmin, or an ivar map/path (fit mode; an
         ivar map disables covariance caching).
@@ -1093,7 +1093,7 @@ def build_object_model(
 
     def log(msg):
         if verbose and rank == 0:
-            print(f"soma.szmodel: {msg}", flush=True)
+            print(f"somapy.szmodel: {msg}", flush=True)
 
     beam_fn = _beam_fn(beam)
     rmax = PROFILE_MAX_ARCMIN * utils.arcmin
@@ -1563,7 +1563,7 @@ class Inpainter:
         Hole radius in arcminutes.
     bl : ndarray or None
         Beam transfer applied to ``cl`` (all spectra multiplied by
-        ``bl**2``), e.g. from ``soma.beams.read_beam``.
+        ``bl**2``), e.g. from ``somapy.beams.read_beam``.
     noise_uK_arcmin : float or None
         Uniform white-noise level added to the covariance diagonal.
     ivar : enmap or None
@@ -1781,7 +1781,7 @@ class Inpainter:
             except (LinAlgError, ValueError) as e:
                 info["n_skipped"] += 1
                 if verbose:
-                    print(f"soma.maps: skipping object {i}: {e}")
+                    print(f"somapy.maps: skipping object {i}: {e}")
                 continue
             sarr = np.asarray(stamp, dtype=np.float64)
             if not np.isfinite(sarr).all():
@@ -1793,7 +1793,96 @@ class Inpainter:
         info["n_geometries"] = len(self._cache)
         if verbose:
             print(
-                f"soma.maps: filled {info['n_filled']} (slow {info['n_slow']}, "
+                f"somapy.maps: filled {info['n_filled']} (slow {info['n_slow']}, "
                 f"skipped {info['n_skipped']}, geometries {info['n_geometries']})"
             )
         return omap, info
+
+
+
+
+def split_equal_area(mask, N, min_pix=1):
+    """Split a masked region into N tiles of approximately equal solid angle.
+
+    The unmasked footprint is divided by a recursive, area-balanced binary
+    partition (a k-d tree over the pixel grid). 
+
+    Parameters
+    ----------
+    mask : enmap.ndmap or array_like
+        Two-dimensional footprint of shape ``(ny, nx)``. Pixels that are nonzero
+        (or `True`) are partitioned, the rest are left out. Any dtype is
+        accepted; only ``mask > 0`` is used.
+    N : int
+        Number of regions to produce, ``N >= 1``. Need not divide the map or be
+        a power of two.
+    min_pix : int, optional
+        Smallest allowed thickness, in pixels, of either side of a cut. The
+        default of 1 lets the split place the boundary wherever the area balance
+        is best; raise it to stop thin slivers forming, at some cost in balance.
+
+    Returns
+    -------
+    labels : enmap.ndmap
+        Region index of every pixel, as an ``int32`` ndmap with the same shape
+        and WCS as `mask`. Pixels outside the mask hold ``-1``; pixels inside
+        hold a value in ``0 .. N - 1``, so ``labels >= 0`` reproduces the input
+        mask exactly and ``labels == k`` is the boolean selection for region
+        ``k``. 
+
+    Notes
+    -----
+    The cuts are made in pixel space, so a footprint that wraps across the RA
+    edge of the array will be cut there. Roll the map (e.g. `numpy.roll` plus a
+    matching ``wcs.wcs.crpix`` shift) so the footprint is contiguous first.
+
+    Regions are rectangles in pixel coordinates but are not guaranteed to be
+    connected on the sky: a rectangle straddling a hole or a gap in the mask
+    yields a region in two or more pieces.
+
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from pixell import enmap
+    >>> shape, wcs = enmap.geometry(pos=np.deg2rad([[-40, -20], [10, 20]]),
+    ...                             res=np.deg2rad(0.1), proj="car")
+    >>> mask = enmap.ones(shape, wcs, dtype=bool)
+    >>> labels = split_equal_area(mask, 6)
+    >>> np.unique(labels).tolist()
+    [0, 1, 2, 3, 4, 5]
+    >>> area = enmap.pixsizemap(shape, wcs)
+    >>> a = np.array([area[labels == k].sum() for k in range(6)])
+    >>> bool(np.all(np.abs(a / a.mean() - 1) < 0.01))
+    True
+    """
+    wcs = mask.wcs
+    w = enmap.enmap(np.where(np.asarray(mask) > 0,
+                             enmap.pixsizemap(mask.shape[-2:], wcs), 0.0), wcs)
+    labels = enmap.full(w.shape, wcs, -1, np.int32)
+    nxt = [0]
+
+    def rec(w, lab, n):
+        ry, rx = (np.flatnonzero(w.sum(a) > 0) for a in (1, 0))
+        if ry.size == 0:                                    # nothing left to hand out
+            nxt[0] += n
+            return
+        sel = (slice(ry[0], ry[-1] + 1), slice(rx[0], rx[-1] + 1))
+        w, lab = w[sel], lab[sel]                           # views, wcs follows
+        if n == 1:
+            lab[w > 0] = nxt[0]
+            nxt[0] += 1
+            return
+        ax = int(np.argmax(enmap.extent(w.shape, w.wcs)))   # cut the long way
+        if w.shape[ax] < 2 * min_pix:
+            ax = 1 - ax
+        lo, hi = min_pix, max(min_pix, w.shape[ax] - min_pix)
+        cs = np.cumsum(w.sum(1 - ax))
+        i = lo + int(np.argmin(np.abs(cs[lo - 1:hi] - cs[-1] * (n // 2) / n)))
+        pre = (slice(None),) * ax
+        for sl, k in ((slice(None, i), n // 2), (slice(i, None), n - n // 2)):
+            rec(w[pre + (sl,)], lab[pre + (sl,)], k)
+
+    rec(w, labels, N)
+    return labels
+

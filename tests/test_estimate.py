@@ -1,10 +1,10 @@
-"""pytest suite for soma.beams.estimate_jitter_beam."""
+"""pytest suite for somapy.beams.estimate_jitter_beam."""
 
 import numpy as np
 import pytest
 from pixell import curvedsky, enmap, utils
 
-from soma import beams, harmonic, maps
+from somapy import beams, harmonic, maps
 
 RES = 8.0  # arcmin
 FWHM = 20.0  # arcmin instrument beam, well sampled by RES

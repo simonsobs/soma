@@ -54,7 +54,7 @@ Outline of the transform:
 
 Typical use::
 
-    from soma.harmonic import ScatterTransform, CARScatterTransform, HealpixScatterTransform
+    from somapy.harmonic import ScatterTransform, CARScatterTransform, HealpixScatterTransform
 
     st = ScatterTransform(lmax, N=3, J_min=2, mask=mask)      # input: healpy alm, any lmax
     st = CARScatterTransform(shape, wcs, mask=mask)           # input: enmap on (shape, wcs)
@@ -74,6 +74,7 @@ from math import comb, isqrt
 import ducc0
 import numpy as np
 from pixell import curvedsky, enmap, reproject, utils, wcsutils
+from scipy.integrate import trapezoid
 from scipy.ndimage import map_coordinates
 
 from . import maps, stats
@@ -412,6 +413,93 @@ def mode_floor(a_m, nhigh=2):
     amp = np.abs(np.asarray(a_m))
     with np.errstate(invalid="ignore", divide="ignore"):
         return amp[..., -nhigh:, :].mean(axis=-2) / amp[..., 0, :]
+
+
+def integrated_multipole_fractions(frac, ell, a_m):
+    """
+    Compute a single scalar fraction of total power per multipole m
+    by power-weighting and integrating the per-ring fractions across ell.
+
+    Parameters
+    ----------
+    frac : ndarray
+        Per-ring power fractions from `mode_metrics()`.
+        Has shape (mmax + 1, nl).
+    ell : ndarray
+        Multipole values corresponding to the columns of frac.
+        Has shape (nl,)
+    a_m : ndarray
+        Azimuthal mode coefficients used to weight rings by monopole power.
+        Has shape (mmax + 1, nl).
+
+    Returns
+    -------
+    scalar_fractions : ndarray
+        Array containing the integrated power fraction for each multipole m.
+        Has shape (mmax + 1,)
+    """
+    mmax = frac.shape[0] - 1
+    ring_weights = (np.abs(a_m)[0] ** 2) * ell
+    valid = np.isfinite(frac).all(axis=0) * np.isfinite(ell) * (ring_weights > 0)
+    if not valid.any():
+        return np.zeros(mmax + 1, dtype=float)
+
+    scalar_fractions = np.empty(mmax + 1, dtype=float)
+    denominator = trapezoid(ring_weights[valid], ell[valid])
+
+    for m in range(mmax + 1):
+        if denominator > 0:
+            numerator = trapezoid(frac[m, valid] * ring_weights[valid], ell[valid])
+            scalar_fractions[m] = float(numerator / denominator)
+        else:
+            scalar_fractions[m] = 0.0
+
+    return scalar_fractions
+
+
+def integrated_multipole_angles(a_m, ell, deg):
+    """
+    Compute a single power-weighted orientation angle (in degrees) for each
+    multipole across ell rings.
+
+    Parameters
+    ----------
+    a_m : ndarray
+        Azimuthal mode coefficients.
+        Has shape (mmax + 1, nl).
+    ell : ndarray
+        Multipole values corresponding to the columns of a_m.
+        Has shape (nl,)
+    deg : bool
+       If True return angles in degrees.
+
+    Returns
+    -------
+    scalar_angles : ndarray of shape (mmax + 1,)
+        Array containing the integrated orientation angle in degrees for each m
+        Index 0 is 0.0 since monopole has no orientation.
+    """
+    mmax = a_m.shape[0] - 1
+    ring_weights = (np.abs(a_m)[0] ** 2) * ell
+    valid = np.isfinite(ell) & (ring_weights > 0)
+    scalar_angles = np.zeros(mmax + 1, dtype=float)
+    if not valid.any():
+        return scalar_angles
+
+    for m in range(1, mmax + 1):
+        ring_angs = mode_orientation(a_m, m, deg=False)
+        v_idx = valid * np.isfinite(ring_angs)
+        if not v_idx.any():
+            continue
+        valid_angs = ring_angs[v_idx]
+        valid_w = ring_weights[v_idx]
+        complex_mean = np.sum(valid_w * np.exp(1j * m * valid_angs)) / np.sum(valid_w)
+        scalar_angles[m] = (np.angle(complex_mean) / m) % (2 * np.pi / m)
+
+    if deg:
+        scalar_angles = np.rad2deg(scalar_angles)
+
+    return scalar_angles
 
 
 # -------------------------------------------------------------------------

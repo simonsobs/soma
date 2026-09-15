@@ -18,7 +18,7 @@ PY = "code"
 CELLS = [
     (
         MD,
-        """# `soma.beams` quickstart
+        """# `somapy.beams` quickstart
 
 Simulate a beam, decompose it into azimuthal modes, and check the answer
 against a closed form. Four short steps; every number below is compared with
@@ -41,7 +41,7 @@ $10^{-3}$–$10^{-2}$.""",
         """import matplotlib.pyplot as plt
 import numpy as np
 
-from soma import beams
+from somapy import beams
 
 # fixed categorical order, validated for colour-vision deficiency
 C = ["#2a78d6", "#1baf7a", "#eda100", "#008300"]
@@ -219,7 +219,7 @@ for lab, got, want in (("E", rp["gamma_E"].real, thE), ("B", rp["gamma_B"].real,
         MD,
         """## Where to go next
 
-- `soma.harmonic` holds the estimator itself: `azimuthal_modes` runs it on
+- `somapy.harmonic` holds the estimator itself: `azimuthal_modes` runs it on
   any flat-sky image, with `mode_metrics`, `mode_orientation`, `mode_floor`
   and `l_nyquist` alongside. `beam_modes` is the beam-flavoured wrapper --
   the Gaussian fit, the aperture, the noise floor and the leakage beams.

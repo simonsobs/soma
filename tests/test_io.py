@@ -1,11 +1,11 @@
-"""pytest suite for soma.io."""
+"""pytest suite for somapy.io."""
 
 import numpy as np
 import pytest
 from PIL import Image
 from pixell import enmap, utils
 
-from soma.io import plot_footprints
+from somapy.io import plot_footprints
 
 
 def strip(dec_range, ra_range=(-180, 180), res=20.0, value=1.0):
@@ -81,7 +81,7 @@ def test_wrapping_map_has_no_seam(nx):
     may come out empty there; nx=9999 also leaves the downgrade a part-block to
     crop, which used to widen the same gap.
     """
-    from soma import io as soma_io
+    from somapy import io as soma_io
 
     box = np.array([[-60, 180], [20, -180]]) * utils.degree
     shape, wcs = enmap.geometry(pos=box, res=360.0 / nx * utils.degree, proj="car")
@@ -93,7 +93,7 @@ def test_wrapping_map_has_no_seam(nx):
 
 def test_partial_map_does_not_wrap_round_the_sky():
     """The seam padding must not carry a map's own edge round to the far side."""
-    from soma import io as soma_io
+    from somapy import io as soma_io
 
     gshape, gwcs = enmap.fullsky_geometry(res=0.2 * utils.degree, proj="car")
     mask = soma_io._footprint(strip((-10, 10), (-40, 40)), 0.0, gshape, gwcs, 0.2)
@@ -130,7 +130,7 @@ def test_writes_gif_and_still(tmp_path):
 
 def test_rotation_actually_changes_the_view(tmp_path):
     """Guard the RA index shift: frames must differ, and a full turn must close."""
-    from soma import io as soma_io
+    from somapy import io as soma_io
 
     maps = {"A": strip((-40, 0), (0, 60))}
     frames = []
@@ -156,7 +156,7 @@ def test_mismatched_labels_and_colors_are_rejected():
 
 def test_backdrop_is_drawn_under_the_footprints(tmp_path):
     """A sky texture must change the bare sky and leave the fills alone."""
-    from soma import io as soma_io
+    from somapy import io as soma_io
 
     sky = enmap.fullsky_geometry(res=2 * utils.degree)
     dec = enmap.posmap(*sky)[0] / utils.degree
@@ -201,7 +201,7 @@ def test_make_backdrop_rotates_galactic_to_equatorial(tmp_path):
     import healpy as hp
     from pixell import coordinates
 
-    from soma.scripts.build_backdrop import make_backdrop
+    from somapy.scripts.build_backdrop import make_backdrop
 
     nside = 64
     b = 90.0 - np.degrees(hp.pix2ang(nside, np.arange(hp.nside2npix(nside)))[0])
@@ -235,7 +235,7 @@ def test_many_footprints_warn_about_colour_alone():
 
 def test_cli_renders_and_reports_areas(tmp_path, capsys):
     """The console script must accept files and print the areas it measured."""
-    from soma.scripts.footprints import main
+    from somapy.scripts.footprints import main
 
     src = tmp_path / "patch_ivar.fits"
     enmap.write_map(str(src), strip((-30, 10), (-60, 60)))
@@ -264,7 +264,7 @@ def test_cli_renders_and_reports_areas(tmp_path, capsys):
 
 
 def test_cli_rejects_bad_arguments(tmp_path):
-    from soma.scripts.footprints import build_parser, main
+    from somapy.scripts.footprints import build_parser, main
 
     with pytest.raises(SystemExit):  # unknown --ra-units choice
         build_parser().parse_args(["x.fits", "--ra-units", "radians"])

@@ -28,7 +28,7 @@ short-lived OpenID Connect (OIDC) tokens, so no long-lived secret is needed.
 
 If the project does **not** exist on PyPI yet, add a *pending* publisher at
 <https://pypi.org/manage/account/publishing/>. If it already exists, go to
-**Your projects → soma → Manage → Publishing → Add a new publisher**.
+**Your projects → somapy → Manage → Publishing → Add a new publisher**.
 
 Fill in the GitHub form with:
 
@@ -59,7 +59,7 @@ be rotated manually, and is readable by any workflow with access to secrets.
 ## Cutting a release
 
 The version is stored in exactly one place: the `version` field of
-`pyproject.toml`. `soma.__version__` reads it back at runtime through
+`pyproject.toml`. `somapy.__version__` reads it back at runtime through
 `importlib.metadata`, so it never needs to be edited separately.
 
 The project follows [semantic versioning](https://semver.org): bump the patch
@@ -85,7 +85,7 @@ the major number for breaking changes.
 
    ```bash
    git switch main && git pull
-   git tag -a v0.1.0 -m "soma 0.1.0"
+   git tag -a v0.1.0 -m "somapy 0.1.0"
    git push origin v0.1.0
    ```
 
@@ -95,8 +95,8 @@ the major number for breaking changes.
 6. Verify the upload:
 
    ```bash
-   pip install --upgrade soma
-   python -c "import soma; print(soma.__version__)"
+   pip install --upgrade somapy
+   python -c "import somapy; print(somapy.__version__)"
    ```
 
 7. Optionally publish a GitHub Release for the tag with the changelog.

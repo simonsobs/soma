@@ -1,10 +1,10 @@
 # Survey footprints
 
-`soma.io.plot_footprints` draws the sky footprint of a set of pixell ivar maps on
+`somapy.io.plot_footprints` draws the sky footprint of a set of pixell ivar maps on
 a rotating globe, with RA/dec labelled.
 
 ```python
-from soma.io import plot_footprints
+from somapy.io import plot_footprints
 
 areas = plot_footprints(
     {"ACT DR6": "act_ivar.fits", "SO SAT": "so_ivar.fits", "Deep56": deep56_ivar},
@@ -27,13 +27,13 @@ grid.
 An example that needs no data files:
 
 ```
-python -m soma.scripts.footprint_demo
+python -m somapy.scripts.footprint_demo
 ```
 
 ## The sky backdrop
 
 The globe is painted with a Planck thermal-dust map, rotated to equatorial, as a
-dim grey texture under the footprints. `src/soma/planck_dust_equ.fits` ships with
+dim grey texture under the footprints. `src/somapy/planck_dust_equ.fits` ships with
 the package (360×720 CAR, float32, 1.0 MB).
 
 ### Regenerating it
@@ -44,8 +44,8 @@ column 0 is `I_ML`, the dust intensity at 545 GHz in µK_RJ):
 
 ```
 curl -O https://irsa.ipac.caltech.edu/data/Planck/release_2/all-sky-maps/maps/component-maps/foregrounds/COM_CompMap_dust-commander_0256_R2.00.fits
-python -m soma.scripts.build_backdrop COM_CompMap_dust-commander_0256_R2.00.fits \
-       -o src/soma/planck_dust_equ.fits
+python -m somapy.scripts.build_backdrop COM_CompMap_dust-commander_0256_R2.00.fits \
+       -o src/somapy/planck_dust_equ.fits
 ```
 
 The rotation is done in spherical harmonics

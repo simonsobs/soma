@@ -1,13 +1,13 @@
-"""Turn a Planck dust map into the sky backdrop that soma.io draws globes on.
+"""Turn a Planck dust map into the sky backdrop that somapy.io draws globes on.
 
-    python -m soma.scripts.build_backdrop COM_CompMap_dust-commander_0256_R2.00.fits
+    python -m somapy.scripts.build_backdrop COM_CompMap_dust-commander_0256_R2.00.fits
 
 Reads the all-sky HEALPix map, rotates it Galactic -> Equatorial and resamples
 it onto a full-sky CAR grid at ``--res`` degrees. The rotation is done in
 spherical harmonics, so the band limit set by ``--res`` *is* the downgrade;
 no aliasing of the small scales that the globe could never show anyway.
 
-Write the result to src/soma/planck_dust_equ.fits to ship it with the package;
+Write the result to src/somapy/planck_dust_equ.fits to ship it with the package;
 see the packaging notes in docs/.
 """
 

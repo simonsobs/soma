@@ -17,7 +17,7 @@ sys.path.insert(0, str(_ROOT / "src"))
 def _release():
     """Return the version from the installed metadata, or from pyproject.toml."""
     try:
-        return get_version("soma")
+        return get_version("somapy")
     except PackageNotFoundError:
         pyproject = (_ROOT / "pyproject.toml").read_text()
         match = re.search(r'^version = "(.+?)"', pyproject, re.MULTILINE)

@@ -1,11 +1,11 @@
-"""pytest suite for the curved-sky half of soma.harmonic."""
+"""pytest suite for the curved-sky half of somapy.harmonic."""
 
 import ducc0
 import numpy as np
 import pytest
 from pixell import curvedsky, utils
 
-from soma import beams, harmonic
+from somapy import beams, harmonic
 
 LMAX = 300
 TH0, PH0 = np.deg2rad(70.0), np.deg2rad(137.0)
