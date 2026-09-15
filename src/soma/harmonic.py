@@ -1229,7 +1229,6 @@ class CARScatterTransform(ScatterTransform):
 
     def __init__(self, shape, wcs, lmax=None, mask=None, niter=0, **kwargs):
         self.map_shape, self.map_wcs, self.niter = tuple(shape[-2:]), wcs.deepcopy(), niter
-        self.map_wcs.wcs.set()  # astropy compares a copied, unset wcs as unequal to anything
         if lmax is None:
             lmax = utils.nint(180 / abs(wcs.wcs.cdelt[1])) - 1
         footprint = np.ones(self.map_shape, bool)
@@ -1240,8 +1239,10 @@ class CARScatterTransform(ScatterTransform):
     def _to_alm(self, m):
         if not hasattr(m, "wcs"):
             m = (enmap.ndmap if isinstance(m, np.ndarray) else enmap.devmap)(m, self.map_wcs)
+        # compared as copies: astropy reports a wcs that was never copied or set up as unequal
+        # to one that was, even when the two describe the same geometry
         if tuple(m.shape[-2:]) != self.map_shape or not wcsutils.equal(
-            m.wcs, self.map_wcs, tol=1e-10
+            m.wcs.deepcopy(), self.map_wcs, tol=1e-10
         ):
             raise ValueError("the map is not on the geometry this transform was built for")
         return curvedsky.map2alm(m, ainfo=self.ainfo, niter=self.niter, nthread=self.nthreads)
