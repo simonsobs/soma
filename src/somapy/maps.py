@@ -13,7 +13,7 @@ import astropy.units as u
 import healpy as hp
 import numpy as np
 from astropy.cosmology import FlatLambdaCDM
-from pixell import coordinates, enmap, pointsrcs, reproject, utils, wcsutils
+from pixell import coordinates, curvedsky, enmap, pointsrcs, reproject, utils, wcsutils
 from pixell import fft as enfft
 from pixell import mpi as pmpi
 from scipy import integrate, special
@@ -653,6 +653,10 @@ def fit_object_amplitudes(
     radius_arcmin=16.0,
     dec_band_deg=1.0,
     jitter=1e-10,
+    pixwin=True,
+    red_noise=None,
+    offset_sigma_arcmin=None,
+    niter=2,
 ):
     """Generalized-least-squares amplitudes of radial templates at positions.
 
@@ -677,7 +681,8 @@ def fit_object_amplitudes(
         array shared by all objects, one per object, or -- for a per-object
         scale/shape grid -- a list of candidate (2, n) templates per
         object, in which case the candidate minimising chi-square wins and
-        its index is reported.
+        its index is reported.  Radii are measured from each object's
+        position (plus its fitted offset).
     cl : ndarray
         1D CMB TT spectrum of the map before the beam.
     beam : float, ndarray, callable or None
@@ -696,11 +701,22 @@ def fit_object_amplitudes(
     jitter : float
         Starting relative diagonal jitter for near-singular covariances
         (band-limited / noiseless maps).
+    pixwin : bool
+        Templates carry the CAR nearest-neighbour pixel window of the map
+        (as maps made by binning do).
+    red_noise : ndarray or None
+        Noise power beyond white, N_l / N_white - 1 (index = multipole), for
+        the correlated part of the noise (see :func:`stamp_cov`).
+    offset_sigma_arcmin : float, ndarray or None
+        Per-object (or common) width of a Gaussian prior on a position
+        offset from the catalog position, fitted with the amplitude by
+        ``niter`` Gauss-Newton steps; None fits at the catalog position.
 
     Returns
     -------
     dict
-        ``amps``, ``errs`` and ``best`` (chosen candidate index) arrays;
+        ``amps``, ``errs`` and ``best`` (chosen candidate index) arrays and
+        ``offsets`` (nobj, 2): the fitted (dec, ra cos dec) offsets [rad];
         objects whose stamp contains non-finite pixels get NaN.
     """
     ras = np.atleast_1d(np.asarray(ras_deg, dtype=np.float64))
@@ -712,7 +728,12 @@ def fit_object_amplitudes(
 
     cl = np.asarray(cl, dtype=np.float64)
     bl = _beam_fn(beam)(np.arange(cl.size, dtype=float))
-    xi = xi_from_cl(cl * bl**2, rmax_rad=6.0 * radius_arcmin * utils.arcmin)
+    rmax = 6.0 * radius_arcmin * utils.arcmin
+    xi = xi_from_cl(cl * bl**2, rmax_rad=rmax)
+    red_xi = None if red_noise is None else xi_from_cl(np.asarray(red_noise, float), rmax)
+    sig = None
+    if offset_sigma_arcmin is not None:
+        sig = np.broadcast_to(offset_sigma_arcmin, (nobj,)) * utils.arcmin
 
     if isinstance(imap, str):
         shape, wcs = enmap.read_map_geometry(imap)
@@ -726,6 +747,7 @@ def fit_object_amplitudes(
     amps = np.full(nobj, np.nan)
     errs = np.full(nobj, np.nan)
     best = np.zeros(nobj, dtype=int)
+    offs = np.zeros((nobj, 2))
     for i in range(nobj):
         stamp = _read_stamp(imap, pixboxes[i])
         if not np.all(np.isfinite(np.asarray(stamp))):
@@ -744,26 +766,44 @@ def fit_object_amplitudes(
                 ncomp=1,
                 ivar=istamp,
                 noise_uK_arcmin=noise_uK_arcmin if istamp is None else None,
+                red_xi=red_xi,
             )
             cho = _cho_with_jitter(cov, jitter)
             if key is not None:
                 cache[key] = cho
         d = np.asarray(stamp, dtype=np.float64).reshape(-1)
         cinv_d = cho_solve(cho, d)
-        modr = np.asarray(stamp.modrmap())
+        ref0 = np.deg2rad([decs[i], ras[i]])
+
+        def tmpl(prof, off, ref0=ref0, stamp=stamp):
+            ref = ref0 + [off[0], off[1] / np.cos(ref0[0])]
+            t = enmap.ndmap(np.interp(stamp.modrmap(ref=ref), prof[0], prof[1]), stamp.wcs)
+            return np.asarray(enmap.apply_window(t) if pixwin else t).reshape(-1)
+
         pick = None
         for j, prof in enumerate(cands[i]):
-            t = np.interp(modr, prof[0], prof[1]).reshape(-1)
+            off, h = np.zeros(2), 0.05 * utils.arcmin
+            # Gauss-Newton on (a, a off) with the prior on off
+            for _ in range(niter if sig is not None else 0):
+                t = tmpl(prof, off)
+                gy, gx = ((tmpl(prof, off + dv) - t) / h for dv in ([h, 0], [0, h]))
+                tg = np.array([t, gy, gx])
+                m, b = tg @ cho_solve(cho, tg.T), tg @ cinv_d
+                m[1:, 1:] += np.eye(2) / max((b[0] / m[0, 0] * sig[i]) ** 2, np.finfo(float).tiny)
+                p = np.linalg.solve(m, b)
+                off = np.clip(off + np.nan_to_num(p[1:] / p[0]), -3 * sig[i], 3 * sig[i])
+            t = tmpl(prof, off)
             tct = float(t @ cho_solve(cho, t))
             if tct <= 0:
                 continue
             a = float(t @ cinv_d) / tct
-            chi2 = -(a**2) * tct  # constant d^T C^-1 d omitted
+            # d^T C^-1 d omitted
+            chi2 = -(a**2) * tct + (0.0 if sig is None else off @ off / sig[i] ** 2)
             if pick is None or chi2 < pick[0]:
-                pick = (chi2, a, 1.0 / np.sqrt(tct), j)
+                pick = (chi2, a, 1.0 / np.sqrt(tct), j, off)
         if pick is not None:
-            _, amps[i], errs[i], best[i] = pick
-    return dict(amps=amps, errs=errs, best=best)
+            _, amps[i], errs[i], best[i], offs[i] = pick
+    return dict(amps=amps, errs=errs, best=best, offsets=offs)
 
 
 def thumbnails_healpix(hmap, pos, r=None, res=None, proj="tan", nest=False):
@@ -818,7 +858,6 @@ _K_CGS = 1.3806488e-16
 SIGMA_T_CM2 = 6.6524587158e-25  # Thomson cross section [cm^2]
 ME_C2_KEV = 510.998946  # electron rest-mass energy [keV]
 MPC_CM = 3.0856775815e24  # 1 Mpc in cm
-P_TH_TO_PE = 1.932  # thermal/electron pressure, ionized H+He (X=0.76)
 ARNAUD = dict(P0=8.403, c500=1.177, gamma=0.3081, alpha=1.0510, beta=5.4905)
 PROFILE_MAX_ARCMIN = 40.0  # models tabulated/painted out to this radius
 COSMO = FlatLambdaCDM(H0=70.0, Om0=0.3)
@@ -834,14 +873,16 @@ def _g_tsz(nu_ghz):
 # Cluster physics (Arnaud et al. 2010 universal pressure profile)
 # ---------------------------------------------------------------------------
 def _cluster_scales(m500c, z, cosmo):
-    """Return (R500c [Mpc], theta500 [rad], P500 [keV/cm^3]) for a cluster."""
+    """Return (R500c [Mpc], theta500 [rad], P500 (M500 / 3e14 h70^-1)^0.12 [keV/cm^3]) for a
+    cluster: the electron-pressure normalization of Arnaud et al. (2010), Eqs. 5 and 13 (without
+    the small alpha'_P(x) term)."""
     h70 = cosmo.H0.value / 70.0
     ez = cosmo.efunc(z)
     rho_c = cosmo.critical_density(z).to(u.Msun / u.Mpc**3).value
     r500_mpc = (3.0 * m500c / (4.0 * np.pi * 500.0 * rho_c)) ** (1.0 / 3.0)
     d_a_mpc = cosmo.angular_diameter_distance(z).to(u.Mpc).value
     theta500_rad = r500_mpc / d_a_mpc
-    m_term = (m500c * h70 / 3.0e14) ** (2.0 / 3.0)
+    m_term = (m500c * h70 / 3.0e14) ** (2.0 / 3.0 + 0.12)
     p500 = 1.65e-3 * ez ** (8.0 / 3.0) * m_term * h70**2
     return r500_mpc, theta500_rad, p500
 
@@ -886,7 +927,7 @@ def deltaT_profile(m500c, z, cosmo, nu_ghz, ntheta=256, los_max_r500=5.0, los_np
     rperp_mpc = d_a_mpc * theta_grid
     r3d = np.sqrt(los[None, :] ** 2 + rperp_mpc[:, None] ** 2)
     x = np.maximum(r3d / r500_mpc, 1e-4)  # floor avoids the GNFW central cusp
-    pe = p500 * _gnfw_pressure(x) / P_TH_TO_PE
+    pe = p500 * _gnfw_pressure(x)  # electron pressure
     y_theta = (SIGMA_T_CM2 / ME_C2_KEV) * 2.0 * integrate.trapezoid(pe, los * MPC_CM, axis=1)
     dT = _g_tsz(nu_ghz) * _TCMB_UK * y_theta
     interp = interp1d(theta_grid, dT, kind="cubic", bounds_error=False, fill_value=(dT[0], dT[-1]))
@@ -1020,7 +1061,7 @@ def build_object_model(
     cl=None,
     noise=15.0,
     snr_min=0.0,
-    s_grid=(0.5, 2.0, 7),
+    s_grid=(0.25, 4.0, 16),
     radius_arcmin=16.0,
     stack_map=None,
     stack_arcmin=10.0,
@@ -1028,6 +1069,9 @@ def build_object_model(
     dec_band_deg=1.0,
     cosmo=COSMO,
     verbose=True,
+    pixwin=True,
+    pixwin_out=True,
+    red_noise=None,
 ):
     """Build the beam-convolved cluster + point-source model map.
 
@@ -1039,7 +1083,9 @@ def build_object_model(
     shape, wcs :
         Geometry of the output model map.
     clusters : dict or None
-        ``ras, decs`` (deg), ``zs``, ``m500c`` (Msun) arrays.
+        ``ras, decs`` (deg), ``zs``, ``m500c`` (Msun) arrays, and optionally
+        ``offset_sigma_arcmin`` (fit mode: prior width of a fitted position
+        offset, see :func:`fit_object_amplitudes`).
     sources : dict or None
         ``ras, decs`` (deg) and, for catalog mode, ``amps`` (peak uK).
     beam : float, ndarray or callable
@@ -1078,13 +1124,21 @@ def build_object_model(
         Cosmology for the cluster scales.
     verbose : bool
         Rank-0 progress printing.
+    pixwin : bool
+        The fit templates carry the CAR pixel window of ``fit_map``.
+    pixwin_out : bool
+        Apply the CAR pixel window to the painted model map (False for a
+        model subtracted from maps without one).
+    red_noise : ndarray or None
+        Noise power beyond white, N_l / N_white - 1 (fit mode).
 
     Returns
     -------
     dict
         On rank 0: ``model`` (enmap), ``stacks`` = {category: {"before",
         "after", "n"}}, ``results`` = {category: list of per-object dicts
-        (idx, amp, amp_err, snr, scale, kept)}, ``nskip``.  On other ranks
+        (idx, ra, dec, amp, amp_err, snr, scale, kept), with the fitted
+        position}, ``nskip``.  On other ranks
         every value is None.
     """
     t0 = time.time()
@@ -1164,9 +1218,15 @@ def build_object_model(
                 ivar=ivar_map,
                 radius_arcmin=radius_arcmin,
                 dec_band_deg=dec_band_deg,
+                pixwin=pixwin,
+                red_noise=red_noise,
+                offset_sigma_arcmin=(
+                    cat["offset_sigma_arcmin"][idx] if "offset_sigma_arcmin" in cat else None
+                ),
             )
         for j, i in enumerate(idx):
-            res = dict(idx=int(i), scale=1.0, amp_err=0.0, snr=np.inf, kept=True)
+            res = dict(idx=int(i), ra=float(cat["ras"][i]), dec=float(cat["decs"][i]))
+            res.update(scale=1.0, amp_err=0.0, snr=np.inf, kept=True)
             if do_fit:
                 a, e, b = fit["amps"][j], fit["errs"][j], int(fit["best"][j])
                 if not np.isfinite(a):
@@ -1174,6 +1234,9 @@ def build_object_model(
                     continue
                 templ = cands[j][b] if kind == "clusters" else cands[j]
                 prof = a * templ[1]
+                ddec, dx = fit["offsets"][j]
+                res["dec"] += np.rad2deg(ddec)
+                res["ra"] += np.rad2deg(dx / np.cos(np.deg2rad(res["dec"])))
                 res.update(
                     amp=float(a),
                     amp_err=float(e),
@@ -1200,10 +1263,12 @@ def build_object_model(
                     sstamp = None
                 if sstamp is not None:
                     rg = profiler.r if kind == "clusters" else psr
+                    ref = np.deg2rad([res["dec"], res["ra"]])
                     own = enmap.enmap(
-                        np.interp(sstamp.modrmap(), rg, prof if res["kept"] else psb * 0.0),
+                        np.interp(sstamp.modrmap(ref=ref), rg, prof if res["kept"] else psb * 0.0),
                         sstamp.wcs,
                     )
+                    own = enmap.apply_window(own) if pixwin else own
                     before = _thumb(
                         sstamp,
                         cat["ras"][i],
@@ -1242,7 +1307,7 @@ def build_object_model(
             bsum, asum, n = bsum + b, asum + a, n + m
         stacks[k] = dict(before=bsum / n if n else None, after=asum / n if n else None, n=n)
 
-    painted = [(k, i, p) for (k, i, p, r) in allres if p is not None]
+    painted = [(k, p, r) for (k, i, p, r) in allres if p is not None]
     results = {k: [] for k in cats}
     for k, _i, _p, r in allres:
         results[k].append(r)
@@ -1255,11 +1320,12 @@ def build_object_model(
         model = paint_objects(
             shape[-2:],
             wcs,
-            np.array([cats[k]["ras"][i] for k, i, _ in painted]),
-            np.array([cats[k]["decs"][i] for k, i, _ in painted]),
-            np.array([p[0] for _, _, p in painted]),
-            [np.array([rgrid[k], p / p[0]]) for k, _, p in painted],
+            np.array([r["ra"] for _, _, r in painted]),
+            np.array([r["dec"] for _, _, r in painted]),
+            np.array([p[0] for _, p, _ in painted]),
+            [np.array([rgrid[k], p / p[0]]) for k, p, _ in painted],
         )
+        model = enmap.apply_window(model) if pixwin_out else model
     else:
         model = enmap.zeros(shape[-2:], wcs)
     log(f"done in {time.time() - t0:.1f}s")
@@ -1282,6 +1348,7 @@ def stamp_cov(
     pol_noise_factor=2.0,
     iau=False,
     row_block=1024,
+    red_xi=None,
 ):
     """Build the dense pixel covariance of a stamp from correlation functions.
 
@@ -1317,6 +1384,12 @@ def stamp_cov(
         Uniform white-noise level; ignored when ``ivar`` is given.
     pol_noise_factor : float
         Ratio of polarization to temperature noise variance.
+    red_xi : dict or None
+        Correlation functions (:func:`xi_from_cl`) of the noise power beyond
+        white, N_l / N_white - 1, for noise made by filtering white noise per
+        pixel and scaling it by the local white level: adds sigma_i sigma_j
+        sqrt(A_i A_j) xi(r_ij) to the temperature block (sigma_i^2 the white
+        variance, A_i the pixel area).
     iau : bool
         If True, flip the sign of U (IAU polarization convention).
     row_block : int
@@ -1340,12 +1413,26 @@ def stamp_cov(
     # convention switch as pixell.enmap.queb_rotmat(..., iau=True).
     usgn = -1.0 if iau else 1.0
 
+    omega = np.asarray(enmap.pixsizemap(shape[-2:], wcs)).reshape(-1)
+    if ivar is not None:
+        var = np.zeros(npix)
+        iv = np.asarray(ivar, dtype=np.float64).reshape(-1)
+        good = np.isfinite(iv) & (iv > 0)
+        var[good] = 1.0 / iv[good]
+    elif noise_uK_arcmin is not None:
+        var = (noise_uK_arcmin * utils.arcmin) ** 2 / omega
+    else:
+        var = None
+    red = np.sqrt(var * omega) if red_xi is not None and var is not None else None
+
     cov = np.empty((ncomp * npix, ncomp * npix))
     for i0 in range(0, npix, row_block):
         sl = slice(i0, min(i0 + row_block, npix))
         dra = (ra[None, :] - ra[sl, None] + np.pi) % (2.0 * np.pi) - np.pi
         r = utils.angdist(np.array([ra[sl], dec[sl]])[:, :, None], np.array([ra, dec])[:, None, :])
         cov[sl, :npix] = xi["tt"](r)
+        if red is not None:
+            cov[sl, :npix] += red[sl, None] * red[None, :] * red_xi["tt"](r)
         if ncomp == 3:
             qsl = slice(npix + sl.start, npix + sl.stop)
             usl = slice(2 * npix + sl.start, 2 * npix + sl.stop)
@@ -1369,16 +1456,6 @@ def stamp_cov(
             cov[qsl, 2 * npix :] = qu
             cov[usl, npix : 2 * npix] = qu
 
-    if ivar is not None:
-        var = np.zeros(npix)
-        iv = np.asarray(ivar, dtype=np.float64).reshape(-1)
-        good = np.isfinite(iv) & (iv > 0)
-        var[good] = 1.0 / iv[good]
-    elif noise_uK_arcmin is not None:
-        omega = np.asarray(enmap.pixsizemap(shape[-2:], wcs)).reshape(-1)
-        var = (noise_uK_arcmin * utils.arcmin) ** 2 / omega
-    else:
-        var = None
     if var is not None:
         idx = np.arange(npix)
         cov[idx, idx] += var
@@ -1886,3 +1963,242 @@ def split_equal_area(mask, N, min_pix=1):
     rec(w, labels, N)
     return labels
 
+
+def atm_factor(ells, lknee, alpha):
+    """Red (atmospheric) part of a noise spectrum relative to its white level.
+
+    Parameters
+    ----------
+    ells : array
+        Multipoles.
+    lknee : float
+        Knee multipole, where the red part equals the white level. Values at or below 1e-3
+        mean no red noise.
+    alpha : float
+        Slope, in the convention ``(lknee / ell)^(-alpha)``: negative for red noise (e.g. -3).
+
+    Returns
+    -------
+    array
+        ``(lknee / ells)^(-alpha)``, zero everywhere when ``lknee <= 1e-3``. At ``ell = 0`` it is
+        infinite for ``alpha < 0``; callers usually zero or clip that multipole.
+    """
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        ret = (lknee * np.nan_to_num(1.0 / ells)) ** (-alpha) if lknee > 1.0e-3 else 0.0 * ells
+    return ret
+
+def rednoise(ells, rms_noise, lknee=0.0, alpha=1.0):
+    """Noise power spectrum of white plus atmospheric (red) noise.
+
+    Parameters
+    ----------
+    ells : array
+        Multipoles.
+    rms_noise : float
+        White-noise depth [uK arcmin].
+    lknee : float
+        Knee multipole (see ``atm_factor``); 0 gives white noise.
+    alpha : float
+        Slope in the convention ``(lknee / ell)^(-alpha)``: negative for red noise (e.g. -3).
+
+    Returns
+    -------
+    array
+        ``N_ell = (rms_noise * arcmin)^2 * [(lknee / ell)^(-alpha) + 1]`` [uK^2 sr], the spectrum
+        of a map whose pixels of area A have white-noise variance ``(rms_noise * arcmin)^2 / A``.
+    """
+    rms = rms_noise * utils.arcmin
+    wnoise = ells * 0.0 + rms**2.0
+    return (atm_factor(ells, lknee, alpha) + 1.0) * wnoise
+
+
+def psizemap(shape, wcs):
+    """Exact pixel areas of a cylindrical (e.g. CAR) map.
+
+    Parameters
+    ----------
+    shape, wcs
+        Geometry of a cylindrical map.
+
+    Returns
+    -------
+    enmap.ndmap
+        Area of each pixel [sr], shape ``shape[-2:]``, from the sines of the pixel's edge
+        declinations (clipped at the poles). Unlike ``enmap.pixsizemap``, which applies to any
+        projection, it is exact up to the poles.
+    """
+    dra, ddec = np.abs(wcs.wcs.cdelt) * utils.degree
+    dec = enmap.posmap([shape[-2], 1], wcs)[0, :, 0]
+    hi, lo = np.minimum(np.pi / 2, dec + ddec / 2), np.maximum(-np.pi / 2, dec - ddec / 2)
+    area = dra * (np.sin(hi) - np.sin(lo))
+    return enmap.ndmap(np.repeat(area[:, None], shape[-1], axis=-1), wcs)
+
+
+def ivar(shape, wcs, noise_muK_arcmin, ipsizemap=None):
+    """Inverse variance per pixel [uK^-2] of white noise of a given depth.
+
+    Parameters
+    ----------
+    shape, wcs
+        Geometry of a cylindrical map.
+    noise_muK_arcmin : float or array
+        Noise depth [uK arcmin], a scalar or a map broadcastable to ``shape[-2:]``.
+    ipsizemap : array or None
+        Pixel areas [sr]; default ``psizemap(shape, wcs)``.
+
+    Returns
+    -------
+    enmap.ndmap
+        ``area / (noise_muK_arcmin * arcmin)**2``.
+    """
+    if ipsizemap is None:
+        ipsizemap = psizemap(shape, wcs)
+    return ipsizemap / (np.asarray(noise_muK_arcmin, dtype=float) * utils.arcmin) ** 2
+
+
+def white_noise(
+    shape=None, wcs=None, noise_muK_arcmin=None, seed=None, ipsizemap=None, div=None, nside=None
+):
+    """Gaussian white noise per pixel, not band-limited.
+
+    Parameters
+    ----------
+    shape, wcs
+        Geometry of a cylindrical map (unused with ``nside``).
+    noise_muK_arcmin : float or array
+        Noise depth [uK arcmin]; not needed when ``div`` is given.
+    seed : int, sequence or None
+        Seed of ``numpy.random.default_rng``.
+    ipsizemap : array or None
+        Pixel areas [sr] used to turn the depth into a variance; default ``psizemap``.
+    div : array or None
+        Inverse variance per pixel [uK^-2]; overrides ``noise_muK_arcmin``.
+    nside : int or None
+        If given, return a HEALPix (RING) map of that Nside instead, with equal pixel areas.
+
+    Returns
+    -------
+    array
+        Noise [uK] with per-pixel standard deviation ``1 / sqrt(div)``; an ndmap when ``div``
+        (or the default inverse variance) is one.
+    """
+    rng = np.random.default_rng(seed)
+    if nside is not None:
+        npix = 12 * nside**2
+        sigma = noise_muK_arcmin * utils.arcmin / np.sqrt(4 * np.pi / npix)
+        return rng.standard_normal(npix) * sigma
+    if div is None:
+        div = ivar(shape, wcs, noise_muK_arcmin, ipsizemap=ipsizemap)
+    return rng.standard_normal(shape) / np.sqrt(div)
+
+
+def rms_from_ivar(ivar, parea=None, cylindrical=True, safe=True, unsafe_tol=1e-3):
+    """White-noise depth [uK arcmin] of each pixel of an inverse-variance map.
+
+    Parameters
+    ----------
+    ivar : enmap.ndmap
+        Inverse variance per pixel [uK^-2]; pixels with ``ivar <= 0`` get depth 0. Must be finite.
+    parea : array or None
+        Pixel areas [sr]; default ``psizemap`` (``cylindrical``) or ``enmap.pixsizemap``.
+    cylindrical : bool
+        Use the exact cylindrical pixel areas when ``parea`` is not given.
+    safe : bool
+        Raise ``ValueError`` if any positive ``ivar`` gives a non-finite variance (underflow);
+        otherwise allow up to a fraction ``unsafe_tol`` of such pixels and set them to 0.
+    unsafe_tol : float
+        Largest fraction of non-finite pixels tolerated when ``safe`` is False.
+
+    Returns
+    -------
+    array
+        ``sqrt(area / ivar)`` in uK arcmin, the inverse of ``ivar(shape, wcs, depth)``.
+    """
+    assert np.all(np.isfinite(ivar))
+    if parea is None:
+        parea = (psizemap if cylindrical else enmap.pixsizemap)(ivar.shape[-2:], ivar.wcs)
+    with np.errstate(divide="ignore", over="ignore"):
+        var = 1.0 / ivar
+    var[ivar <= 0] = 0
+    bad = ~np.isfinite(var)
+    if bad.any() and (safe or bad.mean() > unsafe_tol):
+        raise ValueError(f"{bad.sum()} pixels with a non-finite variance")
+    var[bad] = 0
+    return np.sqrt(var * parea) / utils.arcmin
+
+
+def modulated_noise_map(
+    ivar,
+    lknee=None,
+    alpha=None,
+    lmax=None,
+    N_ell_standard=None,
+    parea=None,
+    cylindrical=False,
+    seed=None,
+    lmin=None,
+    return_N_ell=False,
+):
+    """Noise map with a whitened power spectrum, modulated by an inverse-variance map.
+
+    A Gaussian map with power spectrum ``N_ell_standard`` (curved-sky synthesis,
+    ``curvedsky.rand_map``) is multiplied by the white-noise standard deviation of each pixel,
+    so that dividing the output by that standard deviation leaves a map with spectrum
+    ``N_ell_standard``. ``N_ell_standard`` should tend to 1 at high ell; it can instead be given
+    by a knee and slope as
+
+        N_ell_standard = atm_factor(ell, lknee, alpha) + 1   (alpha < 0 for red noise, e.g. -3),
+
+    set to 0 at ell = 0 and below ``lmin``. The output is band-limited to the length of
+    ``N_ell_standard``. Its white-noise power, ``area / ivar``, is right at every multipole, but the
+    per-pixel standard deviation is ``1 / sqrt(ivar)`` only when a flat ``N_ell_standard`` extends
+    to ell of about ``sqrt(4 pi / area)`` (12190 / res_arcmin for square pixels); it scales with
+    that maximum ell. Without ``N_ell_standard`` and ``lknee`` the output is white noise per
+    pixel.
+
+    Parameters
+    ----------
+    ivar : enmap.ndmap
+        Inverse variance per pixel [uK^-2]; pixels with ``ivar <= 0`` are zero in the output.
+    lknee, alpha : float or None
+        Knee multipole and slope of ``N_ell_standard``, used when it is not given.
+    lmax : int or None
+        Largest multipole of ``N_ell_standard`` built from ``lknee`` and ``alpha``.
+    N_ell_standard : array or None
+        Whitened noise spectrum from ell = 0.
+    parea : array or None
+        Pixel areas [sr]; default ``psizemap`` (``cylindrical``) or ``enmap.pixsizemap``.
+    cylindrical : bool
+        Use the exact cylindrical pixel areas when ``parea`` is not given.
+    seed : int or None
+        Seed of the Gaussian map.
+    lmin : int or None
+        Multipoles below this get no noise (with ``lknee``).
+    return_N_ell : bool
+        Also return the multipoles and ``N_ell_standard`` (both None for white noise).
+
+    Returns
+    -------
+    enmap.ndmap or (enmap.ndmap, array, array)
+        The noise map [uK], with ``(ells, N_ell_standard)`` if ``return_N_ell``.
+    """
+    if N_ell_standard is None and lknee is not None:
+        ells = np.arange(lmax + 1)
+        N_ell_standard = atm_factor(ells, lknee, alpha) + 1.0
+        N_ell_standard[~np.isfinite(N_ell_standard)] = 0
+        if lmin is not None:
+            if lmin >= lmax:
+                raise ValueError("lmin must be below lmax")
+            N_ell_standard[ells < lmin] = 0
+    shape, wcs = ivar.shape[-2:], ivar.wcs
+    if parea is None:
+        parea = (psizemap if cylindrical else enmap.pixsizemap)(shape, wcs)
+    if N_ell_standard is None:
+        ells = None
+        smap = np.random.default_rng(seed).standard_normal(shape) / np.sqrt(parea)
+    else:
+        ells = np.arange(np.size(N_ell_standard))
+        ps = np.asarray(N_ell_standard, dtype=float)[None, None]
+        smap = curvedsky.rand_map((1,) + tuple(shape), wcs, ps=ps, seed=seed)[0]
+    out = rms_from_ivar(ivar, parea=parea) * utils.arcmin * smap
+    return (out, ells, N_ell_standard) if return_N_ell else out
