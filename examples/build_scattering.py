@@ -22,8 +22,9 @@ CELLS = [
         MD,
         r"""# Scattering covariances in the DES footprint
 
-`somapy.harmonic` has classes that compute directional scattering covariances (similar to
-[s2scat](https://github.com/astro-informatics/s2scat)): the mean and variance of a field, the
+`somapy.harmonic` has classes that compute the directional scattering covariances of
+[Mousset et al. (2024)](https://arxiv.org/abs/2407.07007), in the order and normalisation of
+[s2scat](https://github.com/astro-informatics/s2scat): the mean and variance of a field, the
 mean modulus (S1) and power (P00) of its wavelet transform, and the covariances C01 and C11.
 These contain non-Gaussian information that a power spectrum cannot see. The input can be
 harmonic coefficients (`ScatterTransform`), a CAR map (`CARScatterTransform`) or a HEALPix
@@ -165,7 +166,101 @@ plt.show()""",
     ),
     (
         MD,
-        r"""## 3. The scattering transform
+        r"""## 3. The coefficients
+
+The statistics are the scattering covariances defined in
+[Mousset et al. (2024)](https://arxiv.org/abs/2407.07007) (A&A 691, A269), returned in the
+order and normalisation of [s2scat](https://github.com/astro-informatics/s2scat).
+
+### The directional wavelets
+
+The wavelets are the scale-discretised directional wavelets of S2LET, whose harmonic
+coefficients factorise into a radial and an azimuthal part,
+
+$$\Psi^j_{\ell n} = \sqrt{\frac{2\ell + 1}{8\pi^2}} \; \kappa_j(\ell) \, \varsigma_{\ell n}.$$
+
+The radial part cuts the multipole axis into dyadic bands,
+$\kappa_j(\ell)^2 = k(\ell / 2^{\,j+1}) - k(\ell / 2^{\,j})$, where for $\lambda = 2$
+
+$$k(t) = \frac{1}{\mathcal{N}} \int_t^1 s^2(u) \, \frac{du}{u}, \qquad
+s^2(u) = \exp\!\left(\frac{-2}{1 - x(u)^2}\right), \qquad
+x(u) = \frac{2\lambda}{\lambda - 1}\left(u - \frac{1}{\lambda}\right) - 1,$$
+
+with $\mathcal{N}$ the same integral taken from $1/\lambda$, so that $k$ falls smoothly from 1
+at $t \le 1/\lambda$ to 0 at $t \ge 1$. Each $\kappa_j$ is therefore supported on
+$2^{\,j-1} < \ell < 2^{\,j+1}$ and peaks near $\ell = 2^{\,j}$, and
+$\sum_j \kappa_j(\ell)^2 = 1$ for every $\ell \ge 1$: the wavelets tile the multipole axis,
+leaving to the scaling function the few multipoles below $J_{\min}$ that these statistics do
+not use.
+
+The azimuthal part is
+
+$$\varsigma_{\ell n} = \sqrt{2^{-\nu} \binom{\nu}{(\nu - n) / 2}}, \qquad
+\nu = \begin{cases}
+\min(N - 1, \ell), & N + \ell \ \text{odd} \\
+\min(N - 1, \ell - 1), & \text{otherwise,}
+\end{cases}$$
+
+which vanishes unless $|n| \le \nu$ with $N + n$ odd, so for odd $N$ only even orders
+contribute ($n \in \{0, \pm 2\}$ at $N = 3$). It is symmetric,
+$\varsigma_{\ell, -n} = \varsigma_{\ell n}$, and normalised to
+$\sum_n \varsigma_{\ell n}^2 = 1$, which leaves $\Psi^j$ real and band limited at azimuthal
+order $N$: the wavelet is an oriented, elongated feature on the sphere rather than an
+isotropic one.
+
+### The wavelet transform
+
+Rotating a wavelet to a point and an orientation and taking its overlap with the field gives
+one map per scale and orientation,
+
+$$W^{j\gamma}[f](\omega) = \big(f \star \Psi^j\big)(\alpha, \beta, \gamma)
+= \int_{S^2} f(\omega') \,
+\overline{\big[\mathcal{R}_{(\alpha, \beta, \gamma)} \Psi^j\big](\omega')} \; d\Omega(\omega'),$$
+
+where $\omega = (\beta, \alpha)$ is the colatitude and longitude of the point and
+$\mathcal{R}$ is the rotation by the Euler angles $(\alpha, \beta, \gamma)$ in the $zyz$
+convention. The third angle turns the wavelet about its own axis, and because the dependence
+on it is band limited at $N$, the $2N-1$ equally spaced orientations
+
+$$\gamma = \frac{2\pi g}{2N - 1}, \qquad g = 0, \dots, 2N - 2, \qquad
+J_{\min} \le j \le J = \lceil \log_2 L \rceil$$
+
+sample it exactly. The transform is evaluated in harmonic space, each scale at its own band
+limit $2^{\,j+1}$, which is what makes the coarse scales cheap.
+
+### The statistics
+
+Write
+$\langle X \rangle = \sum_p w_p X_p / \sum_p w_p$ for the mean of a map inside the mask, with
+$w_p$ the quadrature weights of the ring geometry, and $C_\ell$ for the power spectrum of $f$.
+The six returned arrays are then
+
+$$\mathrm{mean} = \frac{|f_{00}|}{2\sqrt{\pi}}, \qquad
+\mathrm{var} = \sum_{\ell \ge 1} \frac{(2\ell + 1) \, C_\ell}{4\pi},$$
+
+$$S1^{\,j\gamma} = \big\langle \big| W^{j\gamma}[f] \big| \big\rangle, \qquad
+P00^{\,j\gamma} = \big\langle \big| W^{j\gamma}[f] \big|^2 \big\rangle,$$
+
+$$C01^{\,j_1 j_2 \gamma_2 \gamma_1} = 4\pi \Big\langle W^{j_1\gamma_1}[f] \;
+W^{j_1\gamma_1}\big[\, \big| W^{j_2\gamma_2}[f] \big| \,\big] \Big\rangle,$$
+
+$$C11^{\,j_1 j_2 j_3 \gamma_2 \gamma_3 \gamma_1} = 4\pi \Big\langle
+W^{j_1\gamma_1}\big[\, \big| W^{j_2\gamma_2}[f] \big| \,\big] \;
+W^{j_1\gamma_1}\big[\, \big| W^{j_3\gamma_3}[f] \big| \,\big] \Big\rangle,$$
+
+with $J_{\min} \le j_1 < j_2,\, j_3 \le J$: taking the modulus of a fine-scale wavelet map and
+filtering it again at the coarser scale $j_1$ is what couples the scales. These are $S_1$,
+$S_2$, $S_3$ and $S_4$ of equations (12) to (15) of the paper. There the last two are
+covariances; the wavelets have no monopole, so on the full sky each $W$ already averages to
+zero and the products above are those covariances.
+
+Every array comes back flattened, one $j_1$ block after the next, with `C01` in the index
+order $[j_2, \gamma_2, \gamma_1]$ and `C11` in $[j_2, j_3, \gamma_2, \gamma_3, \gamma_1]$.
+Passing a second field $g$ gives the cross statistics, in which the moduli are those of $g$.""",
+    ),
+    (
+        MD,
+        r"""## 4. The scattering transform
 
 The constructor prepares everything that depends only on the geometry. With a mask the
 statistics are measured inside it, and `cut=True` keeps only the rings that cross it. With

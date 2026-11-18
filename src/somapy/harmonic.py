@@ -24,9 +24,11 @@ For a sky-frame map the two are related by PA = 90 deg - psi.
 Wavelet scattering covariances
 ------------------------------
 
-``ScatterTransform`` computes the statistics of ``s2scat.scatter`` (mean, variance, S1, P00,
-C01 and C11, in the same order and normalisation) for a real field given its harmonic
-coefficients. ``CARScatterTransform`` and ``HealpixScatterTransform`` take a CAR or a HEALPix
+``ScatterTransform`` computes the scattering covariances of Mousset et al. (2024),
+https://arxiv.org/abs/2407.07007, as the statistics of ``s2scat.scatter`` (mean, variance, S1,
+P00, C01 and C11, in the same order and normalisation) for a real field given its harmonic
+coefficients. The notebook ``docs/examples/scattering_des.ipynb`` writes out their
+definitions. ``CARScatterTransform`` and ``HealpixScatterTransform`` take a CAR or a HEALPix
 map instead. Each of them also takes a second field, and then returns cross statistics.
 
 Constructing an object is the expensive step: the filters, geometries and weights of every
