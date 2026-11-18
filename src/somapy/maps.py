@@ -475,6 +475,13 @@ def wfactor(n, mask, sht=True, pmap=None, equal_area=False):
         np.sum((mask**n) * pmap) / np.pi / 4.0 if sht else np.sum((mask**n) * pmap) / np.sum(pmap)
     )
 
+def grow_mask(mask,width_deg):
+    """
+    Grow the masked (zeroed) region by width_deg in degrees.
+    """
+    if width_deg is None: return mask
+    r = width_deg * np.pi / 180.
+    return  mask.distance_transform(rmax=r)>=r
 
 # -------------------------------------------------------------------------
 # Healpix helpers
